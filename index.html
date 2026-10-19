@@ -1,0 +1,698 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<!--/head-wrapper-->
+<title>Sigillum</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,500;0,600;1,500&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: two-column workbench — controls on the left, a square "altar" stage on the right; stacks word → stage → options on phones. */
+:root {
+  --paper: #e8e6ee;
+  --surface: #f4f3f8;
+  --ink: #1b1830;
+  --muted: #5f5a73;
+  --line: #cdc8da;
+  --accent: #8a5a10;
+  --stage: #f7f6fa;
+  --stage-edge: #e2dfea;
+  --s-gold: #93650f;
+  --s-ember: #b03d27;
+  --s-verd: #23736a;
+  --font-display: "Cormorant Garamond", "Cormorant", Georgia, "Times New Roman", serif;
+  --font-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: #0d0c15; --surface: #15131f; --ink: #e9e4d6; --muted: #948ea6; --line: #2b2839;
+    --accent: #d8b468; --stage: #100f19; --stage-edge: #1f1c2b;
+    --s-gold: #d8b468; --s-ember: #e2694f; --s-verd: #63b8aa;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --paper: #0d0c15; --surface: #15131f; --ink: #e9e4d6; --muted: #948ea6; --line: #2b2839;
+  --accent: #d8b468; --stage: #100f19; --stage-edge: #1f1c2b;
+  --s-gold: #d8b468; --s-ember: #e2694f; --s-verd: #63b8aa;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font: 400 15px/1.5 var(--font-body);
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 20px 48px;
+}
+.wrap { max-width: 1180px; margin: 0 auto; display: grid; gap: 28px; }
+
+header { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; flex-wrap: wrap; border-bottom: 1px solid var(--line); padding-bottom: 14px; }
+.brand { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
+h1 { font: 600 2.6rem/1 var(--font-display); letter-spacing: .02em; margin: 0; }
+h1 em { font-style: italic; font-weight: 500; color: var(--accent); }
+.tagline { color: var(--muted); margin: 0; }
+.langs { display: flex; gap: 4px; }
+
+.app {
+  display: grid;
+  gap: 28px;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-areas: "word" "stage" "opts";
+}
+@media (min-width: 900px) {
+  .app {
+    grid-template-columns: minmax(300px, 380px) minmax(0, 1fr);
+    grid-template-areas: "word stage" "opts stage";
+    grid-template-rows: auto 1fr;
+    align-items: start;
+  }
+  .stage-col { position: sticky; top: calc(16px + env(safe-area-inset-top, 0px)); }
+}
+.panel-word { grid-area: word; display: grid; gap: 14px; min-width: 0; }
+.panel-opts { grid-area: opts; display: grid; gap: 18px; min-width: 0; }
+.stage-col { grid-area: stage; display: grid; gap: 18px; min-width: 0; }
+
+.label { font: 500 .72rem/1.2 var(--font-body); text-transform: uppercase; letter-spacing: .12em; color: var(--muted); margin: 0 0 8px; display: block; }
+.field { display: grid; }
+.hint { color: var(--muted); font-size: .82rem; margin: 6px 0 0; }
+
+#word {
+  width: 100%;
+  font: 500 1.9rem/1.2 var(--font-display);
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 10px 14px;
+}
+#word:focus-visible, select:focus-visible, button:focus-visible, input[type="range"]:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 2px;
+}
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip {
+  font: 500 .95rem/1 var(--font-display);
+  background: transparent; color: var(--ink);
+  border: 1px solid var(--line); border-radius: 999px;
+  padding: 6px 12px; cursor: pointer;
+}
+.chip:hover { border-color: var(--accent); color: var(--accent); }
+
+.steps { display: grid; gap: 8px; background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 14px; }
+.step { display: grid; grid-template-columns: 8.5rem minmax(0, 1fr); gap: 10px; align-items: baseline; }
+.step .k { font-size: .78rem; color: var(--muted); }
+.step .v { font: 500 1rem/1.4 var(--font-mono); letter-spacing: .14em; overflow-wrap: anywhere; }
+.step.final .v { color: var(--accent); font-size: 1.15rem; }
+.step .v s { color: var(--muted); opacity: .55; }
+.note { font-size: .8rem; color: var(--muted); margin: 0; }
+
+.seg { display: flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; background: var(--surface); }
+.seg input { position: absolute; opacity: 0; width: 1px; height: 1px; pointer-events: none; }
+.seg label { flex: 1 1 0; text-align: center; padding: 8px 6px; cursor: pointer; font-size: .86rem; border-left: 1px solid var(--line); }
+.seg label:first-of-type { border-left: 0; }
+.seg input:checked + label { background: var(--ink); color: var(--paper); }
+.seg input:focus-visible + label { outline: 2px solid var(--accent); outline-offset: -2px; }
+.method-desc { font-size: .82rem; color: var(--muted); margin: 6px 0 0; min-height: 2.5em; }
+
+.row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+select {
+  width: 100%; font: inherit; font-size: .9rem; color: var(--ink);
+  background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px;
+}
+.inks { display: flex; gap: 10px; flex-wrap: wrap; }
+.inks input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.inks label { display: flex; align-items: center; gap: 6px; cursor: pointer; font-size: .85rem; padding: 4px 10px 4px 4px; border: 1px solid var(--line); border-radius: 999px; }
+.inks .dot { width: 18px; height: 18px; border-radius: 50%; border: 1px solid var(--line); }
+.inks input:checked + label { border-color: var(--ink); box-shadow: inset 0 0 0 1px var(--ink); }
+.inks input:focus-visible + label { outline: 2px solid var(--accent); outline-offset: 2px; }
+input[type="range"] { width: 100%; accent-color: var(--accent); }
+.toggles { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 12px; }
+.toggles label, .check { display: flex; align-items: center; gap: 8px; font-size: .88rem; cursor: pointer; }
+input[type="checkbox"] { accent-color: var(--accent); width: 16px; height: 16px; }
+
+.stage {
+  position: relative;
+  width: 100%; max-width: 100%;
+  aspect-ratio: 1 / 1;
+  background: radial-gradient(circle at 50% 45%, var(--stage) 0%, var(--stage) 55%, var(--stage-edge) 100%);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+}
+.stage svg { display: block; width: 100%; height: 100%; }
+.empty { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); font: italic 500 1.4rem var(--font-display); text-align: center; padding: 24px; }
+.caption { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.caption .glyphs { font: 500 1.5rem/1 var(--font-mono); letter-spacing: .3em; color: var(--accent); }
+.caption .meta { color: var(--muted); font-size: .85rem; }
+
+.actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.btn {
+  font: 500 .88rem/1 var(--font-body); cursor: pointer;
+  padding: 10px 14px; border-radius: 6px;
+  border: 1px solid var(--ink); background: var(--ink); color: var(--paper);
+}
+.btn.ghost { background: transparent; color: var(--ink); border-color: var(--line); }
+.btn.ghost:hover { border-color: var(--ink); }
+.btn.small { padding: 6px 10px; font-size: .8rem; }
+.btn[aria-pressed="true"] { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+.actions .check { margin-left: auto; }
+.toast { font-size: .82rem; color: var(--accent); min-height: 1.2em; margin: 0; }
+#svgOut { width: 100%; height: 120px; font: .75rem var(--font-mono); background: var(--surface); color: var(--ink); border: 1px solid var(--line); border-radius: 6px; }
+
+.vars { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+@media (min-width: 1100px) { .vars { grid-template-columns: repeat(6, minmax(0, 1fr)); } }
+.var {
+  display: grid; gap: 4px; padding: 6px; cursor: pointer;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 4px; color: var(--ink);
+  font: 500 .76rem/1.2 var(--font-body); text-align: center;
+}
+.var:hover { border-color: var(--accent); }
+.var svg { width: 100%; height: auto; aspect-ratio: 1; display: block; }
+
+footer { color: var(--muted); font-size: .8rem; border-top: 1px solid var(--line); padding-top: 14px; }
+footer p { margin: 0; max-width: 70ch; }
+
+@keyframes draw { from { stroke-dashoffset: 1; } to { stroke-dashoffset: 0; } }
+.stage .draw { stroke-dasharray: 1; animation: draw 1.1s cubic-bezier(.5,.1,.2,1) both; }
+@media (prefers-reduced-motion: reduce) { .stage .draw { animation: none; stroke-dasharray: none; } }
+</style>
+<!--/head-close-->
+</head>
+<body>
+<!--/body-open-->
+<div class="wrap">
+  <header>
+    <div class="brand">
+      <h1>Sigil<em>lum</em></h1>
+      <p class="tagline" data-i18n="tagline">Sigils drawn from words, in Russian or English</p>
+    </div>
+    <div class="langs" role="group" aria-label="Interface language">
+      <button class="btn ghost small" type="button" data-ui="en">EN</button>
+      <button class="btn ghost small" type="button" data-ui="ru">RU</button>
+    </div>
+  </header>
+
+  <form class="app" id="form" autocomplete="off">
+    <section class="panel-word">
+      <div class="field">
+        <label class="label" for="word" data-i18n="word">Word or intention</label>
+        <input id="word" name="word" type="text" maxlength="80" spellcheck="false">
+        <p class="hint" data-i18n="hint">Russian or English. Spaces, digits and punctuation are ignored.</p>
+      </div>
+      <div class="chips" id="examples"></div>
+      <div class="steps" id="steps" aria-live="polite"></div>
+    </section>
+
+    <div class="stage-col">
+      <div class="stage" id="stage"></div>
+      <div class="caption">
+        <span class="glyphs" id="glyphs"></span>
+        <span class="meta" id="meta"></span>
+      </div>
+      <div class="actions">
+        <button class="btn" type="button" id="dlSvg" data-download data-i18n="svg">Download SVG</button>
+        <button class="btn" type="button" id="dlPng" data-download data-i18n="png">Download PNG</button>
+        <button class="btn ghost" type="button" id="copySvg" data-i18n="copy">Copy SVG</button>
+        <label class="check"><input type="checkbox" id="transparent" name="transparent"> <span data-i18n="transparent">Transparent background</span></label>
+      </div>
+      <p class="toast" id="toast" role="status"></p>
+      <textarea id="svgOut" readonly hidden aria-label="SVG code"></textarea>
+      <div>
+        <span class="label" data-i18n="variations">Variations of this word</span>
+        <div class="vars" id="vars"></div>
+      </div>
+    </div>
+
+    <section class="panel-opts">
+      <div>
+        <span class="label" data-i18n="method">Method</span>
+        <div class="seg" role="radiogroup">
+          <input type="radio" name="method" id="m-wheel" value="wheel"><label for="m-wheel" data-i18n="wheel">Rose wheel</label>
+          <input type="radio" name="method" id="m-weave" value="weave"><label for="m-weave" data-i18n="weave">Weave</label>
+          <input type="radio" name="method" id="m-num" value="num"><label for="m-num" data-i18n="num">Numerology</label>
+        </div>
+        <p class="method-desc" id="methodDesc"></p>
+      </div>
+      <div>
+        <span class="label" data-i18n="line">Line</span>
+        <div class="seg" role="radiogroup">
+          <input type="radio" name="line" id="l-line" value="line"><label for="l-line" data-i18n="angular">Angular</label>
+          <input type="radio" name="line" id="l-flow" value="flow"><label for="l-flow" data-i18n="flowing">Flowing</label>
+          <input type="radio" name="line" id="l-arc" value="arc"><label for="l-arc" data-i18n="arcs">Arcs</label>
+        </div>
+      </div>
+      <div class="row2">
+        <div class="field">
+          <label class="label" for="sym" data-i18n="symmetry">Symmetry</label>
+          <select id="sym" name="sym"></select>
+        </div>
+        <div class="field">
+          <label class="label" for="frame" data-i18n="frame">Frame</label>
+          <select id="frame" name="frame"></select>
+        </div>
+      </div>
+      <div>
+        <span class="label" data-i18n="ink">Ink</span>
+        <div class="inks" id="inks"></div>
+      </div>
+      <div class="field">
+        <label class="label" for="weight"><span data-i18n="weight">Line weight</span> · <span id="weightVal"></span></label>
+        <input type="range" id="weight" name="weight" min="2" max="16" step="1">
+      </div>
+      <div class="toggles">
+        <label><input type="checkbox" name="vowels" id="vowels"> <span data-i18n="vowels">Remove vowels</span></label>
+        <label><input type="checkbox" name="guide" id="guide"> <span data-i18n="guide">Show construction</span></label>
+        <label><input type="checkbox" name="glow" id="glow"> <span data-i18n="glow">Glow</span></label>
+        <label><input type="checkbox" name="nodes" id="nodes"> <span data-i18n="nodes">Mark each letter</span></label>
+      </div>
+    </section>
+  </form>
+
+  <footer><p data-i18n="footer">The same word always gives the same sigil. Write the word, strike out the vowels and repeated letters, place what remains on a circle and join the points in order. The line starts at the open ring and ends at the bar.</p></footer>
+</div>
+
+<script>
+const ALLOW_DOWNLOAD = true;
+
+/* ---------- alphabets ---------- */
+const AL = {
+  en: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ',
+  ru: 'АБВГДЕЖЗИКЛМНОПРСТУФХЦЧШЩЫЭЮЯ'   // Ё→Е, Й→И folded; Ъ, Ь dropped
+};
+const VOWELS = { en: 'AEIOU', ru: 'АЕИОУЫЭЮЯ' };
+const RU_ANY = /[А-ЯЁ]/, EN_ANY = /[A-Z]/;
+
+function analyze(text, removeVowels) {
+  const up = (text || '').toUpperCase();
+  let ru = 0, en = 0;
+  for (const ch of up) { if (RU_ANY.test(ch)) ru++; else if (EN_ANY.test(ch)) en++; }
+  const lang = ru > en ? 'ru' : 'en';
+  const dropped = lang === 'ru' ? en : ru;
+  const folded = up.replace(/Ё/g, 'Е').replace(/Й/g, 'И');
+  const letters = [...folded].filter(ch => AL[lang].includes(ch));
+  let kept = letters;
+  let vowelsRemoved = false;
+  if (removeVowels) {
+    const c = letters.filter(ch => !VOWELS[lang].includes(ch));
+    if (c.length) { kept = c; vowelsRemoved = true; }
+  }
+  const unique = [...new Set(kept)];
+  const numbers = unique.map(ch => (AL[lang].indexOf(ch) % 9) + 1);
+  return { lang, letters, kept, unique, numbers, dropped, vowelsRemoved };
+}
+
+/* ---------- layouts: letter → point on circles ---------- */
+const TAU = Math.PI * 2;
+const polar = (r, a) => [r * Math.cos(a), r * Math.sin(a)];
+
+function layoutWheel(lang) {
+  const A = AL[lang], n = A.length;
+  const c1 = Math.round(n * 0.18), c2 = Math.round(n * 0.32), c3 = n - c1 - c2;
+  const rings = [[c1, 150, 0], [c2, 275, 0.5], [c3, 400, 0]];
+  const pos = {}, labels = [];
+  let k = 0;
+  for (const [cnt, r, off] of rings) {
+    for (let i = 0; i < cnt; i++) {
+      const a = -Math.PI / 2 + (i + off) * TAU / cnt;
+      const L = A[k++];
+      pos[L] = polar(r, a);
+      labels.push({ key: L, text: L, p: polar(r + 30, a) });
+    }
+  }
+  return { pos, labels, rings: rings.map(x => x[1]) };
+}
+function layoutWeave(lang) {
+  const A = AL[lang], n = A.length, pos = {}, labels = [];
+  [...A].forEach((L, i) => {
+    const a = -Math.PI / 2 + i * TAU / n;
+    pos[L] = polar(400, a);
+    labels.push({ key: L, text: L, p: polar(432, a) });
+  });
+  return { pos, labels, rings: [400] };
+}
+function layoutNum(lang) {
+  const A = AL[lang], pos = {}, labels = [], pts = [];
+  for (let d = 1; d <= 9; d++) pts[d] = polar(360, -Math.PI / 2 + (d - 1) * TAU / 9);
+  [...A].forEach((L, i) => { pos[L] = pts[(i % 9) + 1]; });
+  for (let d = 1; d <= 9; d++) {
+    const a = -Math.PI / 2 + (d - 1) * TAU / 9;
+    labels.push({ key: String(d), text: String(d), p: polar(400, a) });
+  }
+  return { pos, labels, rings: [360], num: true };
+}
+const LAYOUTS = { wheel: layoutWheel, weave: layoutWeave, num: layoutNum };
+
+/* ---------- path construction ---------- */
+const f = n => (Math.round(n * 10) / 10).toString();
+const sub = (a, b) => [a[0] - b[0], a[1] - b[1]];
+function unit(v, fallback) {
+  const l = Math.hypot(v[0], v[1]);
+  return l > 1e-6 ? [v[0] / l, v[1] / l] : (fallback || [1, 0]);
+}
+
+function buildPath(pts, mode) {
+  let d = `M${f(pts[0][0])} ${f(pts[0][1])}`;
+  let startCtl = pts[1], endCtl = pts[pts.length - 2];
+  if (mode === 'line' || pts.length === 2 && mode === 'flow') {
+    for (let i = 1; i < pts.length; i++) d += ` L${f(pts[i][0])} ${f(pts[i][1])}`;
+  } else if (mode === 'arc') {
+    for (let i = 1; i < pts.length; i++) {
+      const p = pts[i - 1], q = pts[i];
+      // bow each chord toward the centre; a gentle outward bow when the chord already passes near it
+      const mid = [(p[0] + q[0]) / 2, (p[1] + q[1]) / 2];
+      const ml = Math.hypot(mid[0], mid[1]);
+      let c;
+      if (ml < 40) { const n = unit([-(q[1] - p[1]), q[0] - p[0]]); c = [n[0] * 90, n[1] * 90]; }
+      else c = [mid[0] * 0.18, mid[1] * 0.18];
+      if (i === 1) startCtl = c;
+      endCtl = c;
+      d += ` Q${f(c[0])} ${f(c[1])} ${f(q[0])} ${f(q[1])}`;
+    }
+  } else {
+    for (let i = 0; i < pts.length - 1; i++) {
+      const p0 = pts[i - 1] || pts[i], p1 = pts[i], p2 = pts[i + 1], p3 = pts[i + 2] || p2;
+      const c1 = [p1[0] + (p2[0] - p0[0]) / 6, p1[1] + (p2[1] - p0[1]) / 6];
+      const c2 = [p2[0] - (p3[0] - p1[0]) / 6, p2[1] - (p3[1] - p1[1]) / 6];
+      if (i === 0) startCtl = c1;
+      endCtl = c2;
+      d += ` C${f(c1[0])} ${f(c1[1])} ${f(c2[0])} ${f(c2[1])} ${f(p2[0])} ${f(p2[1])}`;
+    }
+  }
+  return { d, start: pts[0], startCtl, end: pts[pts.length - 1], endCtl };
+}
+
+/* ---------- the sigil ---------- */
+let uid = 0;
+function buildSVG(an, s, col, opt = {}) {
+  const id = 'g' + (++uid);
+  const W = s.weight * (opt.thumb ? 1.9 : 1);
+  const L = LAYOUTS[s.method](an.lang);
+  let pts = an.unique.map(ch => L.pos[ch]).filter(Boolean);
+  pts = pts.filter((p, i) => i === 0 || p !== pts[i - 1]);
+  if (pts.length === 1) pts = [[0, 0], pts[0]];
+  const size = opt.size ? ` width="${opt.size}" height="${opt.size}"` : '';
+  const o = [];
+  o.push(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="-500 -500 1000 1000"${size} role="img" aria-label="${an.unique.join('')}">`);
+  o.push('<defs>');
+  if (s.glow) o.push(`<filter id="${id}f" x="-20%" y="-20%" width="140%" height="140%"><feGaussianBlur stdDeviation="${opt.thumb ? 10 : 7}" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>`);
+  let hole = 0, path = null;
+  if (pts.length >= 2) {
+    path = buildPath(pts, s.line);
+    hole = 10 + W * 1.7;
+    o.push(`<mask id="${id}m" maskUnits="userSpaceOnUse" x="-600" y="-600" width="1200" height="1200"><rect x="-600" y="-600" width="1200" height="1200" fill="#fff"/><circle cx="${f(path.start[0])}" cy="${f(path.start[1])}" r="${f(hole)}" fill="#000"/></mask>`);
+  }
+  if (s.frame === 'text') o.push(`<path id="${id}t" d="M0 -440 A440 440 0 1 1 -0.01 -440"/>`);
+  o.push('</defs>');
+  if (col.bg) o.push(`<rect x="-500" y="-500" width="1000" height="1000" fill="${col.bg}"/>`);
+
+  // construction
+  if (s.guide && !opt.thumb) {
+    const used = new Set(L.num ? an.numbers.map(String) : an.unique);
+    o.push(`<g fill="none" stroke="${col.faint}" stroke-width="1.5">`);
+    for (const r of L.rings) o.push(`<circle r="${r}"/>`);
+    if (L.num) for (let d = 1; d <= 9; d++) for (let e = d + 1; e <= 9; e++) {
+      const a = polar(360, -Math.PI / 2 + (d - 1) * TAU / 9), b = polar(360, -Math.PI / 2 + (e - 1) * TAU / 9);
+      o.push(`<line x1="${f(a[0])}" y1="${f(a[1])}" x2="${f(b[0])}" y2="${f(b[1])}" stroke-opacity=".35"/>`);
+    }
+    o.push('</g>');
+    o.push(`<g font-family="IBM Plex Mono, ui-monospace, monospace" font-size="${L.num ? 26 : 21}" text-anchor="middle" dominant-baseline="central">`);
+    for (const lb of L.labels) {
+      const u = used.has(lb.key);
+      o.push(`<text x="${f(lb.p[0])}" y="${f(lb.p[1])}" fill="${u ? col.accent : col.faint}"${u ? ' font-weight="600"' : ''}>${lb.text}</text>`);
+    }
+    o.push('</g>');
+  }
+
+  o.push(`<g fill="none" stroke="${col.ink}" stroke-linecap="round" stroke-linejoin="round"${s.glow ? ` filter="url(#${id}f)"` : ''}>`);
+
+  // frame
+  const fw = Math.max(1.5, W * 0.55);
+  if (s.frame === 'ring') o.push(`<circle r="470" stroke-width="${f(fw)}"/>`);
+  if (s.frame === 'double') o.push(`<circle r="472" stroke-width="${f(fw)}"/><circle r="452" stroke-width="${f(fw * 0.45)}"/>`);
+  if (s.frame === 'ticks') {
+    const A = AL[an.lang], used = new Set(an.unique);
+    o.push(`<circle r="472" stroke-width="${f(fw)}"/>`);
+    [...A].forEach((ch, i) => {
+      const a = -Math.PI / 2 + i * TAU / A.length;
+      const p = polar(472, a), q = polar(used.has(ch) ? 432 : 456, a);
+      o.push(`<line x1="${f(p[0])}" y1="${f(p[1])}" x2="${f(q[0])}" y2="${f(q[1])}" stroke-width="${f(used.has(ch) ? fw : fw * 0.5)}"/>`);
+    });
+  }
+  if (s.frame === 'text') {
+    const word = an.letters.join('') || an.unique.join('');
+    let str = '';
+    while (str.length < 90) str += word + ' · ';
+    o.push(`<circle r="478" stroke-width="${f(fw)}"/><circle r="404" stroke-width="${f(fw * 0.45)}"/>`);
+    o.push(`<text font-family="Cormorant Garamond, Georgia, serif" font-weight="600" font-size="30" fill="${col.ink}" stroke="none" letter-spacing="2" dominant-baseline="central"><textPath href="#${id}t" textLength="2760" lengthAdjust="spacing">${str}</textPath></text>`);
+  }
+
+  // sigil body, repeated for symmetry
+  if (path) {
+    const k = s.sym.startsWith('r') ? +s.sym.slice(1) : 0;
+    const copies = s.sym === 'mirror' ? ['', 'scale(-1 1)'] : k ? Array.from({ length: k }, (_, i) => i ? `rotate(${f(360 * i / k)})` : '') : [''];
+    const tEnd = unit(sub(path.end, path.endCtl), [0, 1]);
+    const bar = 20 + W * 3;
+    const nrm = [-tEnd[1], tEnd[0]];
+    const e1 = [path.end[0] + nrm[0] * bar, path.end[1] + nrm[1] * bar];
+    const e2 = [path.end[0] - nrm[0] * bar, path.end[1] - nrm[1] * bar];
+    const ringR = hole - W * 0.45;
+    const anim = opt.animate ? ' class="draw" pathLength="1"' : '';
+    for (const t of copies) {
+      o.push(`<g${t ? ` transform="${t}"` : ''}>`);
+      o.push(`<path d="${path.d}" stroke-width="${f(W)}" mask="url(#${id}m)"${anim}/>`);
+      o.push(`<circle cx="${f(path.start[0])}" cy="${f(path.start[1])}" r="${f(ringR)}" stroke-width="${f(W * 0.8)}"/>`);
+      o.push(`<line x1="${f(e1[0])}" y1="${f(e1[1])}" x2="${f(e2[0])}" y2="${f(e2[1])}" stroke-width="${f(W)}"/>`);
+      if (s.nodes) for (let i = 1; i < pts.length - 1; i++)
+        o.push(`<circle cx="${f(pts[i][0])}" cy="${f(pts[i][1])}" r="${f(W * 1.3)}" fill="${col.ink}" stroke="none"/>`);
+      o.push('</g>');
+    }
+  }
+  o.push('</g></svg>');
+  return o.join('');
+}
+
+/* ---------- interface text ---------- */
+const T = {
+  en: {
+    tagline: 'Sigils drawn from words, in Russian or English',
+    word: 'Word or intention', hint: 'Russian or English. Spaces, digits and punctuation are ignored.',
+    method: 'Method', wheel: 'Rose wheel', weave: 'Weave', num: 'Numerology',
+    d_wheel: 'The alphabet sits on three concentric rings. The line visits each remaining letter in order.',
+    d_weave: 'The whole alphabet sits on one circle. Arcs join the letters.',
+    d_num: 'Each letter becomes a number from 1 to 9, placed on a nine-point circle.',
+    line: 'Line', angular: 'Angular', flowing: 'Flowing', arcs: 'Arcs',
+    symmetry: 'Symmetry', frame: 'Frame', ink: 'Ink', weight: 'Line weight',
+    sym_none: 'None', sym_mirror: 'Mirror', sym_r: 'Radial ×',
+    fr_none: 'None', fr_ring: 'Ring', fr_double: 'Double ring', fr_ticks: 'Letter ticks', fr_text: 'Word ring',
+    ink_ink: 'Ink', ink_gold: 'Gold', ink_ember: 'Ember', ink_verd: 'Verdigris',
+    vowels: 'Remove vowels', guide: 'Show construction', glow: 'Glow', nodes: 'Mark each letter',
+    svg: 'Download SVG', png: 'Download PNG', copy: 'Copy SVG', transparent: 'Transparent background',
+    copied: 'SVG copied to the clipboard.', copyFail: 'Copying is blocked here. The SVG code is selected below, so copy it with Ctrl+C or ⌘C.',
+    saved: 'Saved', variations: 'Variations of this word',
+    s_letters: 'Letters', s_cons: 'Vowels removed', s_unique: 'Repeats removed', s_numbers: 'Numbers',
+    s_keep: 'Vowels kept: the word has no consonants.',
+    dropped: n => `Mixed alphabets: ${n} letter${n === 1 ? '' : 's'} from the other script ignored.`,
+    empty: 'Type a word to draw its sigil.',
+    meta: (m, n) => `${m} · ${n} letters`,
+    v: ['Rose wheel', 'Weave', 'Numerology', 'Mirrored wheel', 'Threefold weave', 'Mirrored numbers'],
+    footer: 'The same word always gives the same sigil. Write the word, strike out the vowels and repeated letters, place what remains on a circle and join the points in order. The line starts at the open ring and ends at the bar.'
+  },
+  ru: {
+    tagline: 'Сигилы из слов на русском или английском',
+    word: 'Слово или намерение', hint: 'Русский или английский. Пробелы, цифры и знаки препинания не учитываются.',
+    method: 'Метод', wheel: 'Колесо розы', weave: 'Плетение', num: 'Нумерология',
+    d_wheel: 'Алфавит расположен на трёх кругах. Линия проходит через оставшиеся буквы по порядку.',
+    d_weave: 'Весь алфавит на одном круге. Буквы соединяются дугами.',
+    d_num: 'Каждая буква становится числом от 1 до 9 на девятиконечном круге.',
+    line: 'Линия', angular: 'Прямая', flowing: 'Плавная', arcs: 'Дуги',
+    symmetry: 'Симметрия', frame: 'Рамка', ink: 'Чернила', weight: 'Толщина линии',
+    sym_none: 'Нет', sym_mirror: 'Зеркальная', sym_r: 'Радиальная ×',
+    fr_none: 'Нет', fr_ring: 'Кольцо', fr_double: 'Двойное кольцо', fr_ticks: 'Метки букв', fr_text: 'Кольцо со словом',
+    ink_ink: 'Тушь', ink_gold: 'Золото', ink_ember: 'Киноварь', ink_verd: 'Патина',
+    vowels: 'Убрать гласные', guide: 'Показать построение', glow: 'Свечение', nodes: 'Отметить буквы',
+    svg: 'Скачать SVG', png: 'Скачать PNG', copy: 'Копировать SVG', transparent: 'Прозрачный фон',
+    copied: 'SVG скопирован в буфер обмена.', copyFail: 'Копирование здесь заблокировано. Код SVG выделен ниже: скопируйте его через Ctrl+C или ⌘C.',
+    saved: 'Сохранено', variations: 'Варианты этого слова',
+    s_letters: 'Буквы', s_cons: 'Без гласных', s_unique: 'Без повторов', s_numbers: 'Числа',
+    s_keep: 'Гласные оставлены: в слове нет согласных.',
+    dropped: n => `Смешанные алфавиты: пропущено букв другого алфавита: ${n}.`,
+    empty: 'Введите слово, чтобы нарисовать сигил.',
+    meta: (m, n) => `${m} · ${n} букв`,
+    v: ['Колесо розы', 'Плетение', 'Нумерология', 'Зеркальное колесо', 'Тройное плетение', 'Зеркальные числа'],
+    footer: 'Одно и то же слово всегда даёт один и тот же сигил. Запишите слово, вычеркните гласные и повторяющиеся буквы, расположите оставшиеся на круге и соедините по порядку. Линия начинается у открытого кольца и заканчивается чертой.'
+  }
+};
+
+const PRESETS = [
+  { method: 'wheel', line: 'flow', sym: 'none', frame: 'ticks' },
+  { method: 'weave', line: 'arc', sym: 'none', frame: 'text' },
+  { method: 'num', line: 'line', sym: 'none', frame: 'ring' },
+  { method: 'wheel', line: 'flow', sym: 'mirror', frame: 'double' },
+  { method: 'weave', line: 'arc', sym: 'r3', frame: 'ring' },
+  { method: 'num', line: 'flow', sym: 'mirror', frame: 'double' }
+];
+const EXAMPLES = ['Свобода', 'Courage', 'Победа', 'Clarity', 'Любовь', 'Сила'];
+const SYMS = ['none', 'mirror', 'r3', 'r4', 'r5', 'r6'];
+const FRAMES = ['none', 'ring', 'double', 'ticks', 'text'];
+const INKS = ['ink', 'gold', 'ember', 'verd'];
+const INK_VAR = { ink: '--ink', gold: '--s-gold', ember: '--s-ember', verd: '--s-verd' };
+
+/* ---------- state ---------- */
+const ui0 = (navigator.language || 'en').toLowerCase().startsWith('ru') ? 'ru' : 'en';
+const DEFAULTS = {
+  word: ui0 === 'ru' ? 'Свобода' : 'Clarity', ui: ui0,
+  method: 'wheel', line: 'flow', sym: 'none', frame: 'ticks', ink: 'ink',
+  weight: 7, vowels: true, guide: false, glow: false, nodes: false, transparent: false
+};
+let S = { ...DEFAULTS };
+try { const saved = JSON.parse(localStorage.getItem('sigillum') || 'null'); if (saved) S = { ...S, ...saved }; } catch (e) {}
+const save = () => { try { localStorage.setItem('sigillum', JSON.stringify(S)); } catch (e) {} };
+
+const $ = id => document.getElementById(id);
+const form = $('form');
+
+function colors(forExport) {
+  const cs = getComputedStyle(document.documentElement);
+  const v = n => cs.getPropertyValue(n).trim();
+  return {
+    ink: v(INK_VAR[S.ink]),
+    accent: v('--accent'),
+    faint: v('--muted'),
+    bg: forExport && !S.transparent ? v('--stage') : null
+  };
+}
+
+function buildSelects() {
+  const t = T[S.ui];
+  $('sym').innerHTML = SYMS.map(k => `<option value="${k}">${k === 'none' ? t.sym_none : k === 'mirror' ? t.sym_mirror : t.sym_r + k.slice(1)}</option>`).join('');
+  $('frame').innerHTML = FRAMES.map(k => `<option value="${k}">${t['fr_' + k]}</option>`).join('');
+  $('inks').innerHTML = INKS.map(k => `<input type="radio" name="ink" id="ink-${k}" value="${k}"><label for="ink-${k}"><span class="dot" style="background:var(${INK_VAR[k]})"></span>${t['ink_' + k]}</label>`).join('');
+  $('examples').innerHTML = EXAMPLES.map(w => `<button type="button" class="chip" data-word="${w}">${w}</button>`).join('');
+}
+
+function applyUI() {
+  const t = T[S.ui];
+  document.documentElement.lang = S.ui;
+  document.querySelectorAll('[data-i18n]').forEach(el => { const v = t[el.dataset.i18n]; if (typeof v === 'string') el.textContent = v; });
+  document.querySelectorAll('[data-ui]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.ui === S.ui)));
+  buildSelects();
+  writeForm();
+}
+
+function writeForm() {
+  $('word').value = S.word;
+  form.querySelector(`[name=method][value=${S.method}]`).checked = true;
+  form.querySelector(`[name=line][value=${S.line}]`).checked = true;
+  form.querySelector(`[name=ink][value=${S.ink}]`).checked = true;
+  $('sym').value = S.sym; $('frame').value = S.frame; $('weight').value = S.weight;
+  for (const k of ['vowels', 'guide', 'glow', 'nodes', 'transparent']) $(k).checked = S[k];
+}
+function readForm() {
+  const fd = new FormData(form);
+  S.word = $('word').value;
+  S.method = fd.get('method'); S.line = fd.get('line'); S.ink = fd.get('ink');
+  S.sym = $('sym').value; S.frame = $('frame').value; S.weight = +$('weight').value;
+  for (const k of ['vowels', 'guide', 'glow', 'nodes', 'transparent']) S[k] = $(k).checked;
+}
+
+function renderSteps(an) {
+  const t = T[S.ui];
+  if (!an.letters.length) { $('steps').innerHTML = `<p class="note">${t.empty}</p>`; return; }
+  const seen = new Set();
+  const uniq = an.kept.map(ch => { const dup = seen.has(ch); seen.add(ch); return dup ? `<s>${ch}</s>` : ch; }).join('');
+  const cons = an.letters.map(ch => an.vowelsRemoved && VOWELS[an.lang].includes(ch) ? `<s>${ch}</s>` : ch).join('');
+  let h = `<div class="step"><span class="k">${t.s_letters}</span><span class="v">${an.letters.join('')}</span></div>`;
+  if (S.vowels) h += `<div class="step"><span class="k">${t.s_cons}</span><span class="v">${cons}</span></div>`;
+  h += `<div class="step"><span class="k">${t.s_unique}</span><span class="v">${uniq}</span></div>`;
+  h += `<div class="step final"><span class="k">→</span><span class="v">${an.unique.join('')}</span></div>`;
+  if (S.method === 'num') h += `<div class="step"><span class="k">${t.s_numbers}</span><span class="v">${an.numbers.join('·')}</span></div>`;
+  if (S.vowels && !an.vowelsRemoved) h += `<p class="note">${t.s_keep}</p>`;
+  if (an.dropped) h += `<p class="note">${t.dropped(an.dropped)}</p>`;
+  $('steps').innerHTML = h;
+}
+
+let lastKey = '';
+function render() {
+  const t = T[S.ui];
+  const an = analyze(S.word, S.vowels);
+  renderSteps(an);
+  $('weightVal').textContent = S.weight;
+  $('methodDesc').textContent = t['d_' + S.method];
+  const col = colors(false);
+  const key = JSON.stringify([an.unique, S.method, S.line, S.sym]);
+  if (!an.unique.length) {
+    $('stage').innerHTML = `<div class="empty">${t.empty}</div>`;
+    $('glyphs').textContent = ''; $('meta').textContent = ''; $('vars').innerHTML = '';
+    return;
+  }
+  $('stage').innerHTML = buildSVG(an, S, col, { animate: key !== lastKey });
+  lastKey = key;
+  $('glyphs').textContent = an.unique.join('');
+  $('meta').textContent = t.meta(t[S.method], AL[an.lang].length);
+  $('vars').innerHTML = PRESETS.map((p, i) =>
+    `<button type="button" class="var" data-preset="${i}">${buildSVG(an, { ...S, ...p, guide: false }, col, { thumb: true })}<span>${t.v[i]}</span></button>`).join('');
+}
+
+/* ---------- events ---------- */
+form.addEventListener('input', () => { readForm(); save(); render(); });
+form.addEventListener('submit', e => e.preventDefault());
+document.addEventListener('click', e => {
+  const chip = e.target.closest('[data-word]');
+  if (chip) { S.word = chip.dataset.word; writeForm(); save(); render(); return; }
+  const v = e.target.closest('[data-preset]');
+  if (v) { Object.assign(S, PRESETS[+v.dataset.preset]); writeForm(); save(); render(); return; }
+  const u = e.target.closest('[data-ui]');
+  if (u) { S.ui = u.dataset.ui; save(); applyUI(); render(); }
+});
+
+function fileBase() {
+  const w = analyze(S.word, false).letters.join('').toLowerCase() || 'sigil';
+  return 'sigil-' + w;
+}
+function exportSVG(size) { return buildSVG(analyze(S.word, S.vowels), S, colors(true), { size }); }
+function download(blob, name) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+}
+function toast(msg) { $('toast').textContent = msg; clearTimeout(toast.t); toast.t = setTimeout(() => { $('toast').textContent = ''; }, 4000); }
+
+$('dlSvg').addEventListener('click', () => {
+  download(new Blob([exportSVG(1024)], { type: 'image/svg+xml' }), fileBase() + '.svg');
+});
+$('dlPng').addEventListener('click', () => {
+  const img = new Image();
+  img.onload = () => {
+    const c = document.createElement('canvas'); c.width = c.height = 2048;
+    c.getContext('2d').drawImage(img, 0, 0, 2048, 2048);
+    c.toBlob(b => b && download(b, fileBase() + '.png'), 'image/png');
+  };
+  img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(exportSVG(2048));
+});
+$('copySvg').addEventListener('click', () => {
+  const svg = exportSVG(1024);
+  const fallback = () => { const ta = $('svgOut'); ta.hidden = false; ta.value = svg; ta.focus(); ta.select(); toast(T[S.ui].copyFail); };
+  try {
+    navigator.clipboard.writeText(svg).then(() => { $('svgOut').hidden = true; toast(T[S.ui].copied); }, fallback);
+  } catch (e) { fallback(); }
+});
+if (!ALLOW_DOWNLOAD) document.querySelectorAll('[data-download]').forEach(b => { b.hidden = true; });
+
+// keep the sigil's ink in step with the viewer's theme
+const rerender = () => { lastKey = JSON.stringify([analyze(S.word, S.vowels).unique, S.method, S.line, S.sym]); render(); };
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change', rerender);
+new MutationObserver(rerender).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+
+applyUI();
+render();
+</script>
+<!--/body-close-->
+</body>
+</html>
