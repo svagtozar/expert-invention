@@ -265,17 +265,23 @@ footer p { margin: 0; max-width: 70ch; }
         <span class="label" data-i18n="ornaments">Ornaments</span>
         <div class="row2">
           <div class="field">
-            <label class="label" for="hatch" data-i18n="hatch">Hatching</label>
+            <label class="label" for="hatch" data-i18n="hatch">Strokes</label>
             <select id="hatch" name="hatch"></select>
           </div>
+          <div class="field">
+            <label class="label" for="inl" data-i18n="inl">In the pattern</label>
+            <select id="inl" name="inl"></select>
+          </div>
+        </div>
+        <div class="row2">
           <div class="field">
             <label class="label" for="orn" data-i18n="orn">Ring ornament</label>
             <select id="orn" name="orn"></select>
           </div>
-        </div>
-        <div class="field">
-          <label class="label" for="eye" data-i18n="eye">Eye</label>
-          <select id="eye" name="eye"></select>
+          <div class="field">
+            <label class="label" for="eye" data-i18n="eye">Eye</label>
+            <select id="eye" name="eye"></select>
+          </div>
         </div>
         <label class="check"><input type="checkbox" name="accents" id="accents"> <span data-i18n="accents">Crescents and stars</span></label>
       </div>
@@ -569,6 +575,94 @@ function ringSVG(kind, R, ink, W, h) {
   return `<g>${o.join('')}</g>`;
 }
 
+function mulberry32(a) {
+  return () => {
+    a |= 0; a = a + 0x6D2B79F5 | 0;
+    let t = Math.imul(a ^ a >>> 15, 1 | a);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+
+// short dashes that run parallel to the line, now on one side, now on the other
+function dashSVG(segs, W, hole, rnd) {
+  const step = 4;
+  const { out, total } = samplePath(segs, step);
+  const a = hole + W * 2, b = total - W * 4, off = W * 1.4 + 7;
+  let s = a + rnd() * 30, d = '';
+  while (s < b) {
+    const e = Math.min(b, s + 18 + rnd() * 38);
+    const run = out.slice(Math.ceil(s / step), Math.floor(e / step) + 1);
+    const side = rnd() < 0.5 ? 1 : -1;
+    const lanes = rnd() < 0.3 ? [1, 1.9] : [1];
+    // skip runs that wrap round a sharp corner, where an offset line would cross itself
+    if (run.length >= 3 && run[0].t[0] * run[run.length - 1].t[0] + run[0].t[1] * run[run.length - 1].t[1] > 0.75) {
+      for (const ln of lanes) {
+        const r = ln > 1 ? run.slice(Math.floor(run.length * 0.2), Math.ceil(run.length * 0.8)) : run;
+        r.forEach((q, i) => { d += (i ? 'L' : 'M') + pt([q.p[0] - q.t[1] * side * off * ln, q.p[1] + q.t[0] * side * off * ln]); });
+      }
+    }
+    s = e + 14 + rnd() * 44;
+  }
+  return d ? `<path d="${d}" stroke-width="${f(Math.max(1.2, W * 0.45))}"/>` : '';
+}
+
+// small signs set beside the line: at its corners, past its ends, along it and in its hollow
+const INLINE_POOL = {
+  stars: ['star8', 'star4', 'dots'],
+  moons: ['crescent', 'moon', 'dots'],
+  eyes: ['eye', 'dots', 'star4'],
+  mixed: ['eye', 'crescent', 'star8', 'star4', 'dots', 'moon']
+};
+const INLINE_R = { eye: 46, crescent: 22, moon: 18, star8: 24, star4: 20, dots: 18 };
+function inlineSVG(kind, pts, path, W, ink, rnd, hole) {
+  const pool = INLINE_POOL[kind];
+  if (!pool) return '';
+  const { out, total } = samplePath(path.segs, 6);
+  const placed = [];
+  const free = (p, r) => Math.hypot(p[0], p[1]) < 440 - r
+    && out.every(q => Math.hypot(q.p[0] - p[0], q.p[1] - p[1]) > r + W * 0.8 + 6)
+    && placed.every(([c, cr]) => Math.hypot(c[0] - p[0], c[1] - p[1]) > r + cr + 10);
+  const cands = [];
+  const away = (p, dir, dist, prefer) => cands.push({ p, dir: unit(dir, [0, -1]), dist, prefer });
+  away(path.start, sub(path.start, path.startCtl), hole + 22);
+  away(path.end, sub(path.end, path.endCtl), 34 + W * 3);
+  for (let i = 1; i < pts.length - 1; i++) {
+    const v1 = unit(sub(pts[i], pts[i - 1])), v2 = unit(sub(pts[i + 1], pts[i]));
+    away(pts[i], [v1[0] - v2[0], v1[1] - v2[1]], 30 + W * 2);
+  }
+  for (const fr of [0.5, 0.25, 0.75]) {
+    const q = out[Math.min(out.length - 1, Math.round(fr * total / 6))];
+    if (q) away(q.p, [-q.t[1] * (fr === 0.25 ? -1 : 1), q.t[0] * (fr === 0.25 ? -1 : 1)], 40 + W * 2, fr === 0.5 ? 'eye' : null);
+  }
+  const cx = pts.reduce((s, p) => s + p[0], 0) / pts.length, cy = pts.reduce((s, p) => s + p[1], 0) / pts.length;
+  cands.push({ p: [cx, cy], dir: [0, -1], dist: 0, prefer: pool.includes('eye') ? 'eye' : null });
+
+  const sw = f(Math.max(1.2, W * 0.5));
+  const o = [];
+  for (const c of cands) {
+    if (placed.length >= 8) break;
+    const g = c.prefer && pool.includes(c.prefer) && rnd() < 0.8 ? c.prefer : pool[Math.floor(rnd() * pool.length)];
+    const r = INLINE_R[g];
+    let at = null;
+    for (const k of [1, 1.5, 2.1]) {
+      const p = [c.p[0] + c.dir[0] * (c.dist + r) * k, c.p[1] + c.dir[1] * (c.dist + r) * k];
+      if (free(p, r)) { at = p; break; }
+      if (!c.dist) break;
+    }
+    if (!at) continue;
+    placed.push([at, r]);
+    const toward = Math.atan2(-c.dir[1], -c.dir[0]) * 180 / Math.PI;
+    if (g === 'eye') o.push(`<g transform="translate(${pt(at)}) scale(.3)">${horusGlyph(ink, W * 0.8 / 0.3)}</g>`);
+    if (g === 'crescent') o.push(`<path transform="translate(${pt(at)}) rotate(${f(c.dist ? toward : -90)})" d="M0 -21 A21 21 0 0 0 0 21 A37 37 0 0 1 0 -21 Z" fill="${ink}" stroke="none"/>`);
+    if (g === 'moon') o.push(moonGlyph(at, 16, [0.25, 0.375, 0.625, 0.75][Math.floor(rnd() * 4)], ink, sw));
+    if (g === 'star8') o.push(`<path d="${star(at, 8, 24, 9)}" fill="${ink}" stroke="none"/>`);
+    if (g === 'star4') o.push(`<path d="${star(at, 4, 21, 5)}" fill="${ink}" stroke="none"/>`);
+    if (g === 'dots') for (const d of [[0, -12], [-11, 8], [11, 8]]) o.push(`<circle cx="${f(at[0] + d[0])}" cy="${f(at[1] + d[1])}" r="4.8" fill="${ink}" stroke="none"/>`);
+  }
+  return o.join('');
+}
+
 // crescents at the four quarters, sparkles on the diagonals
 function accentsSVG(ink, skipTop) {
   const o = [];
@@ -669,11 +763,14 @@ function buildSVG(an, s, col, opt = {}) {
     const e2 = [path.end[0] - nrm[0] * bar, path.end[1] - nrm[1] * bar];
     const ringR = hole - W * 0.45;
     const anim = opt.animate ? ' class="draw" pathLength="1"' : '';
-    const hatch = hatchSVG(path.segs, s.hatch, W, hole);
+    const seed = hash32(an.unique.join('') + s.method + s.line);
+    const hatch = s.hatch === 'dashes' ? dashSVG(path.segs, W, hole, mulberry32(seed)) : hatchSVG(path.segs, s.hatch, W, hole);
+    const inline = inlineSVG(s.inl, pts, path, W, col.ink, mulberry32(seed ^ 0x9e3779b9), hole);
     for (const t of copies) {
       o.push(`<g${t ? ` transform="${t}"` : ''}>`);
       o.push(`<path d="${path.d}" stroke-width="${f(W)}" mask="url(#${id}m)"${anim}/>`);
       if (hatch) o.push(hatch);
+      if (inline) o.push(inline);
       o.push(`<circle cx="${f(path.start[0])}" cy="${f(path.start[1])}" r="${f(ringR)}" stroke-width="${f(W * 0.8)}"/>`);
       o.push(`<line x1="${f(e1[0])}" y1="${f(e1[1])}" x2="${f(e2[0])}" y2="${f(e2[1])}" stroke-width="${f(W)}"/>`);
       if (s.nodes) for (let i = 1; i < pts.length - 1; i++)
@@ -701,8 +798,9 @@ const T = {
     fr_none: 'None', fr_ring: 'Ring', fr_double: 'Double ring', fr_ticks: 'Letter ticks', fr_text: 'Word ring',
     ink_ink: 'Ink', ink_gold: 'Gold', ink_ember: 'Ember', ink_verd: 'Verdigris',
     vowels: 'Remove vowels', guide: 'Show construction', glow: 'Glow', nodes: 'Mark each letter',
-    ornaments: 'Ornaments', hatch: 'Hatching', orn: 'Ring ornament', eye: 'Eye', accents: 'Crescents and stars',
-    h_none: 'None', h_ticks: 'Ticks', h_ladder: 'Ladder', h_feather: 'Feathered', h_double: 'Double line',
+    ornaments: 'Ornaments', hatch: 'Strokes', orn: 'Ring ornament', eye: 'Eye', accents: 'Crescents and stars',
+    inl: 'In the pattern', i_none: 'None', i_stars: 'Stars and dots', i_moons: 'Moons', i_eyes: 'Eyes', i_mixed: 'Mixed',
+    h_none: 'None', h_dashes: 'Parallel dashes', h_ticks: 'Ticks', h_ladder: 'Ladder', h_feather: 'Feathered', h_double: 'Double line',
     o_none: 'None', o_moon: 'Moon phases', o_planets: 'Planets', o_zodiac: 'Zodiac', o_sun: 'Sun rays', o_stars: 'Stars',
     e_none: 'None', 'e_horus-top': 'Eye of Horus, above', 'e_horus-mid': 'Eye of Horus, behind',
     'e_prov-top': 'Eye of Providence, above', 'e_prov-mid': 'Eye of Providence, behind',
@@ -730,8 +828,9 @@ const T = {
     fr_none: 'Нет', fr_ring: 'Кольцо', fr_double: 'Двойное кольцо', fr_ticks: 'Метки букв', fr_text: 'Кольцо со словом',
     ink_ink: 'Тушь', ink_gold: 'Золото', ink_ember: 'Киноварь', ink_verd: 'Патина',
     vowels: 'Убрать гласные', guide: 'Показать построение', glow: 'Свечение', nodes: 'Отметить буквы',
-    ornaments: 'Украшения', hatch: 'Штрихи вдоль линии', orn: 'Орнамент кольца', eye: 'Глаз', accents: 'Полумесяцы и звёзды',
-    h_none: 'Нет', h_ticks: 'Насечки', h_ladder: 'Лесенка', h_feather: 'Оперение', h_double: 'Двойная линия',
+    ornaments: 'Украшения', hatch: 'Штрихи', orn: 'Орнамент кольца', eye: 'Глаз', accents: 'Полумесяцы и звёзды',
+    inl: 'В узоре', i_none: 'Нет', i_stars: 'Звёзды и точки', i_moons: 'Луны', i_eyes: 'Глаза', i_mixed: 'Всё вместе',
+    h_none: 'Нет', h_dashes: 'Черточки вдоль', h_ticks: 'Насечки', h_ladder: 'Лесенка', h_feather: 'Оперение', h_double: 'Двойная линия',
     o_none: 'Нет', o_moon: 'Фазы луны', o_planets: 'Планеты', o_zodiac: 'Зодиак', o_sun: 'Солнечные лучи', o_stars: 'Звёзды',
     e_none: 'Нет', 'e_horus-top': 'Глаз Гора сверху', 'e_horus-mid': 'Глаз Гора за сигилом',
     'e_prov-top': 'Всевидящее око сверху', 'e_prov-mid': 'Всевидящее око за сигилом',
@@ -752,11 +851,12 @@ const PRESETS = [
   { method: 'wheel', line: 'flow', sym: 'none', frame: 'ticks' },
   { method: 'weave', line: 'arc', sym: 'none', frame: 'text' },
   { method: 'num', line: 'line', sym: 'none', frame: 'ring' },
-  { method: 'wheel', line: 'flow', sym: 'none', frame: 'double', hatch: 'ladder', orn: 'moon', eye: 'horus-top', accents: true },
+  { method: 'wheel', line: 'flow', sym: 'none', frame: 'double', hatch: 'dashes', inl: 'mixed', orn: 'moon', eye: 'none', accents: true },
   { method: 'weave', line: 'arc', sym: 'r3', frame: 'ring' },
-  { method: 'weave', line: 'arc', sym: 'none', frame: 'ring', hatch: 'feather', orn: 'sun', eye: 'prov-mid', accents: false }
+  { method: 'weave', line: 'arc', sym: 'none', frame: 'ring', hatch: 'feather', inl: 'eyes', orn: 'sun', eye: 'prov-mid', accents: false }
 ];
-const HATCHES = ['none', 'ticks', 'ladder', 'feather', 'double'];
+const HATCHES = ['none', 'dashes', 'ticks', 'ladder', 'feather', 'double'];
+const INLINES = ['none', 'stars', 'moons', 'eyes', 'mixed'];
 const ORNS = ['none', 'moon', 'planets', 'zodiac', 'sun', 'stars'];
 const EYES = ['none', 'horus-top', 'horus-mid', 'prov-top', 'prov-mid'];
 const EXAMPLES = ['Свобода', 'Courage', 'Победа', 'Clarity', 'Любовь', 'Сила'];
@@ -770,12 +870,12 @@ const ui0 = (navigator.language || 'en').toLowerCase().startsWith('ru') ? 'ru' :
 const DEFAULTS = {
   word: ui0 === 'ru' ? 'Свобода' : 'Clarity', ui: ui0,
   method: 'wheel', line: 'flow', sym: 'none', frame: 'double', ink: 'ink',
-  hatch: 'ladder', orn: 'moon', eye: 'horus-top', accents: true,
+  hatch: 'dashes', inl: 'mixed', orn: 'none', eye: 'none', accents: false,
   weight: 7, vowels: true, guide: false, glow: false, nodes: false, transparent: false
 };
 let S = { ...DEFAULTS };
-try { const saved = JSON.parse(localStorage.getItem('sigillum') || 'null'); if (saved) S = { ...S, ...saved }; } catch (e) {}
-const save = () => { try { localStorage.setItem('sigillum', JSON.stringify(S)); } catch (e) {} };
+try { const saved = JSON.parse(localStorage.getItem('sigillum.v2') || 'null'); if (saved) S = { ...S, ...saved }; } catch (e) {}
+const save = () => { try { localStorage.setItem('sigillum.v2', JSON.stringify(S)); } catch (e) {} };
 
 const $ = id => document.getElementById(id);
 const form = $('form');
@@ -796,6 +896,7 @@ function buildSelects() {
   $('sym').innerHTML = SYMS.map(k => `<option value="${k}">${k === 'none' ? t.sym_none : k === 'mirror' ? t.sym_mirror : t.sym_r + k.slice(1)}</option>`).join('');
   $('frame').innerHTML = FRAMES.map(k => `<option value="${k}">${t['fr_' + k]}</option>`).join('');
   $('hatch').innerHTML = HATCHES.map(k => `<option value="${k}">${t['h_' + k]}</option>`).join('');
+  $('inl').innerHTML = INLINES.map(k => `<option value="${k}">${t['i_' + k]}</option>`).join('');
   $('orn').innerHTML = ORNS.map(k => `<option value="${k}">${t['o_' + k]}</option>`).join('');
   $('eye').innerHTML = EYES.map(k => `<option value="${k}">${t['e_' + k]}</option>`).join('');
   $('inks').innerHTML = INKS.map(k => `<input type="radio" name="ink" id="ink-${k}" value="${k}"><label for="ink-${k}"><span class="dot" style="background:var(${INK_VAR[k]})"></span>${t['ink_' + k]}</label>`).join('');
@@ -817,7 +918,7 @@ function writeForm() {
   form.querySelector(`[name=line][value=${S.line}]`).checked = true;
   form.querySelector(`[name=ink][value=${S.ink}]`).checked = true;
   $('sym').value = S.sym; $('frame').value = S.frame; $('weight').value = S.weight;
-  $('hatch').value = S.hatch; $('orn').value = S.orn; $('eye').value = S.eye;
+  $('hatch').value = S.hatch; $('inl').value = S.inl; $('orn').value = S.orn; $('eye').value = S.eye;
   for (const k of ['vowels', 'guide', 'glow', 'nodes', 'transparent', 'accents']) $(k).checked = S[k];
 }
 function readForm() {
@@ -825,7 +926,7 @@ function readForm() {
   S.word = $('word').value;
   S.method = fd.get('method'); S.line = fd.get('line'); S.ink = fd.get('ink');
   S.sym = $('sym').value; S.frame = $('frame').value; S.weight = +$('weight').value;
-  S.hatch = $('hatch').value; S.orn = $('orn').value; S.eye = $('eye').value;
+  S.hatch = $('hatch').value; S.inl = $('inl').value; S.orn = $('orn').value; S.eye = $('eye').value;
   for (const k of ['vowels', 'guide', 'glow', 'nodes', 'transparent', 'accents']) S[k] = $(k).checked;
 }
 

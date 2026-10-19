@@ -21,7 +21,8 @@ Export the result as SVG or as a 2048px PNG, or copy the SVG code.
 
 These are optional and deterministic, and they are included in every export.
 
-- **Hatching along the line**: ticks, a ladder (strokes on both sides), feathered strokes that taper toward the ends, or a double line.
+- **Strokes**: short dashes running parallel to the line (the default), ticks, a ladder (strokes on both sides), feathered strokes that taper toward the ends, or a double line.
+- **In the pattern**: stars, dots, moons, crescents and small Eyes of Horus placed by the line itself, at its corners, past its ends, beside it and in its hollow. They are placed so they never touch the line.
 - **Eye**: the Eye of Horus (wadjet) or the Eye of Providence. It sits at the top of the frame, or appears large and faint behind the sigil.
 - **Ring ornament**: the eight moon phases, the seven classical planets, the twelve zodiac signs, sun rays or stars. The word's letters decide where the ring starts, so each word gets its own arrangement.
 - **Crescents and stars** at the four quarters and diagonals, outside the frame.
