@@ -27,3 +27,7 @@ These are optional and deterministic, and they are included in every export.
 - **Eye**: the Eye of Horus (wadjet) or the Eye of Providence. It sits at the top of the frame, or appears large and faint behind the sigil.
 - **Ring ornament**: the eight moon phases, the seven classical planets, the twelve zodiac signs, sun rays or stars. The word's letters decide where the ring starts, so each word gets its own arrangement.
 - **Crescents and stars** at the four quarters and diagonals, outside the frame.
+
+## Drawing
+
+On screen the sigil is drawn as a pen would draw it. The frame comes first. Then the pen sets down at the start ring and travels the line, and the parallel strokes appear as it passes. Each ornament grows out of the line and is drawn stroke by stroke. Ornaments are pure line work, with hatching where a shape would otherwise be filled. **Draw again** replays the drawing. Exports are always the finished image.
