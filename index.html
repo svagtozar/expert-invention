@@ -184,7 +184,9 @@ footer p { margin: 0; max-width: 70ch; }
 
 @keyframes draw { from { stroke-dashoffset: 1; } to { stroke-dashoffset: 0; } }
 .stage .draw { stroke-dasharray: 1; animation: draw 1.1s cubic-bezier(.5,.1,.2,1) both; }
-@media (prefers-reduced-motion: reduce) { .stage .draw { animation: none; stroke-dasharray: none; } }
+@keyframes fade { from { opacity: 0; transform: scale(.985); } to { opacity: 1; transform: none; } }
+.stage .fade { animation: fade .7s ease-out both; transform-origin: center; }
+@media (prefers-reduced-motion: reduce) { .stage .draw { animation: none; stroke-dasharray: none; } .stage .fade { animation: none; } }
 </style>
 <!--/head-close-->
 </head>
@@ -283,6 +285,7 @@ footer p { margin: 0; max-width: 70ch; }
             <select id="eye" name="eye"></select>
           </div>
         </div>
+        <label class="check"><input type="checkbox" name="calli" id="calli"> <span data-i18n="calli">Calligraphic line</span></label>
         <label class="check"><input type="checkbox" name="accents" id="accents"> <span data-i18n="accents">Crescents and stars</span></label>
       </div>
       <div>
@@ -584,30 +587,74 @@ function mulberry32(a) {
   };
 }
 
-// short dashes that run parallel to the line, now on one side, now on the other
-function dashSVG(segs, W, hole, rnd) {
-  const step = 4;
-  const { out, total } = samplePath(segs, step);
-  const a = hole + W * 2, b = total - W * 4, off = W * 1.4 + 7;
-  let s = a + rnd() * 30, d = '';
-  while (s < b) {
-    const e = Math.min(b, s + 18 + rnd() * 38);
-    const run = out.slice(Math.ceil(s / step), Math.floor(e / step) + 1);
-    const side = rnd() < 0.5 ? 1 : -1;
-    const lanes = rnd() < 0.3 ? [1, 1.9] : [1];
-    // skip runs that wrap round a sharp corner, where an offset line would cross itself
-    if (run.length >= 3 && run[0].t[0] * run[run.length - 1].t[0] + run[0].t[1] * run[run.length - 1].t[1] > 0.75) {
-      for (const ln of lanes) {
-        const r = ln > 1 ? run.slice(Math.floor(run.length * 0.2), Math.ceil(run.length * 0.8)) : run;
-        r.forEach((q, i) => { d += (i ? 'L' : 'M') + pt([q.p[0] - q.t[1] * side * off * ln, q.p[1] + q.t[0] * side * off * ln]); });
-      }
-    }
-    s = e + 14 + rnd() * 44;
+// a filled ribbon along samples, its width given per sample: the basis of every organic stroke
+function ribbonD(qs, wAt) {
+  const L = [], R = [];
+  qs.forEach((q, i) => {
+    const w = wAt(q, i) / 2, n = [-q.t[1], q.t[0]];
+    L.push(pt([q.p[0] + n[0] * w, q.p[1] + n[1] * w]));
+    R.push(pt([q.p[0] - n[0] * w, q.p[1] - n[1] * w]));
+  });
+  return 'M' + L.join('L') + 'L' + R.reverse().join('L') + 'Z';
+}
+// samples of a quadratic curve, for tendrils and cradles
+function curveSamples(P, n = 18) {
+  const out = [];
+  for (let i = 0; i <= n; i++) {
+    const u = i / n, p = bez(P, u), q = bez(P, Math.min(1, u + 0.01)), r = bez(P, Math.max(0, u - 0.01));
+    out.push({ p, t: unit(sub(q, r)), u });
   }
-  return d ? `<path d="${d}" stroke-width="${f(Math.max(1.2, W * 0.45))}"/>` : '';
+  return out;
 }
 
-// small signs set beside the line: at its corners, past its ends, along it and in its hollow
+// the sigil line as a broad-nib stroke: it swells with direction and thins toward both ends
+function calligraphy(path, pts, W) {
+  const { out, total } = samplePath(path.segs, 4);
+  const ramp = x => Math.min(1, Math.max(0, x) / 80);
+  const wAt = q => {
+    const pen = 0.6 + 0.4 * Math.abs(Math.sin(Math.atan2(q.t[1], q.t[0]) - 0.7));
+    return W * 1.4 * pen * (0.45 + 0.55 * Math.min(ramp(q.s), ramp(total - q.s)));
+  };
+  const joins = pts.slice(1, -1).map(p => `<circle cx="${f(p[0])}" cy="${f(p[1])}" r="${f(W * 0.62)}"/>`).join('');
+  return { d: ribbonD(out, wAt), joins };
+}
+
+// slender lens-shaped strokes running parallel to the line, set on the outside of each bend
+function dashSVG(segs, W, hole, rnd, ink) {
+  const step = 4;
+  const { out, total } = samplePath(segs, step);
+  const a = hole + W * 2, b = total - W * 4, off = W * 1.5 + 8;
+  let s = a + rnd() * 20, d = '', flip = 1;
+  while (s < b) {
+    const e = Math.min(b, s + 36 + rnd() * 50);
+    const run = out.slice(Math.ceil(s / step), Math.floor(e / step) + 1);
+    if (run.length >= 4) {
+      const t0 = run[0].t, t1 = run[run.length - 1].t;
+      if (t0[0] * t1[0] + t0[1] * t1[1] > 0.9) {
+        const bend = (t1[0] - t0[0]) * -t0[1] + (t1[1] - t0[1]) * t0[0];
+        const side = Math.abs(bend) > 0.04 ? (bend > 0 ? -1 : 1) : (flip = -flip);
+        const lanes = rnd() < 0.4 ? [1, 1.75] : [1];
+        for (const ln of lanes) {
+          const r = ln > 1 ? run.slice(Math.floor(run.length * 0.22), Math.ceil(run.length * 0.78)) : run;
+          const m = r.length - 1, H = Math.max(0.9, W * 0.4) * (ln > 1 ? 0.7 : 1);
+          if (m < 2) continue;
+          const lens = r.map((q, i) => {
+            const u = i / m, o = side * off * ln * (0.93 + 0.07 * Math.sin(Math.PI * u));
+            return { p: [q.p[0] - q.t[1] * o, q.p[1] + q.t[0] * o], t: q.t, u };
+          });
+          // leave out any stroke that would brush against another stretch of the line
+          const s0 = r[0].s, s1 = r[m].s;
+          const crowded = lens.some(l => out.some(q => (q.s < s0 - 40 || q.s > s1 + 40) && Math.hypot(q.p[0] - l.p[0], q.p[1] - l.p[1]) < off * 0.8));
+          if (!crowded) d += ribbonD(lens, q => H * 2 * Math.sin(Math.PI * q.u) + 0.3);
+        }
+      }
+    }
+    s = e + 18 + rnd() * 40;
+  }
+  return d ? `<path d="${d}" fill="${ink}" stroke="none"/>` : '';
+}
+
+// small signs that grow out of the line on tendrils: at its corners, past its end, along it, and one in its hollow
 const INLINE_POOL = {
   stars: ['star8', 'star4', 'dots'],
   moons: ['crescent', 'moon', 'dots'],
@@ -615,25 +662,25 @@ const INLINE_POOL = {
   mixed: ['eye', 'crescent', 'star8', 'star4', 'dots', 'moon']
 };
 const INLINE_R = { eye: 46, crescent: 22, moon: 18, star8: 24, star4: 20, dots: 18 };
-function inlineSVG(kind, pts, path, W, ink, rnd, hole) {
+function inlineSVG(kind, pts, path, W, ink, rnd) {
   const pool = INLINE_POOL[kind];
   if (!pool) return '';
   const { out, total } = samplePath(path.segs, 6);
   const placed = [];
   const free = (p, r) => Math.hypot(p[0], p[1]) < 440 - r
-    && out.every(q => Math.hypot(q.p[0] - p[0], q.p[1] - p[1]) > r + W * 0.8 + 6)
-    && placed.every(([c, cr]) => Math.hypot(c[0] - p[0], c[1] - p[1]) > r + cr + 10);
+    && out.every(q => Math.hypot(q.p[0] - p[0], q.p[1] - p[1]) > r + W * 0.8 + 8)
+    && placed.every(([c, cr]) => Math.hypot(c[0] - p[0], c[1] - p[1]) > r + cr + 12);
   const cands = [];
-  const away = (p, dir, dist, prefer) => cands.push({ p, dir: unit(dir, [0, -1]), dist, prefer });
-  away(path.start, sub(path.start, path.startCtl), hole + 22);
-  away(path.end, sub(path.end, path.endCtl), 34 + W * 3);
+  const away = (p, dir, dist, prefer, tan) => cands.push({ p, dir: unit(dir, [0, -1]), dist, prefer, tan });
+  away(path.end, sub(path.end, path.endCtl), 30 + W * 3);
   for (let i = 1; i < pts.length - 1; i++) {
     const v1 = unit(sub(pts[i], pts[i - 1])), v2 = unit(sub(pts[i + 1], pts[i]));
-    away(pts[i], [v1[0] - v2[0], v1[1] - v2[1]], 30 + W * 2);
+    away(pts[i], [v1[0] - v2[0], v1[1] - v2[1]], 34 + W * 2, null, v2);
   }
   for (const fr of [0.5, 0.25, 0.75]) {
     const q = out[Math.min(out.length - 1, Math.round(fr * total / 6))];
-    if (q) away(q.p, [-q.t[1] * (fr === 0.25 ? -1 : 1), q.t[0] * (fr === 0.25 ? -1 : 1)], 40 + W * 2, fr === 0.5 ? 'eye' : null);
+    const sd = fr === 0.25 ? -1 : 1;
+    if (q) away(q.p, [-q.t[1] * sd, q.t[0] * sd], 46 + W * 2, fr === 0.5 ? 'eye' : null, q.t);
   }
   const cx = pts.reduce((s, p) => s + p[0], 0) / pts.length, cy = pts.reduce((s, p) => s + p[1], 0) / pts.length;
   cands.push({ p: [cx, cy], dir: [0, -1], dist: 0, prefer: pool.includes('eye') ? 'eye' : null });
@@ -641,26 +688,51 @@ function inlineSVG(kind, pts, path, W, ink, rnd, hole) {
   const sw = f(Math.max(1.2, W * 0.5));
   const o = [];
   for (const c of cands) {
-    if (placed.length >= 8) break;
+    if (placed.length >= 7) break;
     const g = c.prefer && pool.includes(c.prefer) && rnd() < 0.8 ? c.prefer : pool[Math.floor(rnd() * pool.length)];
     const r = INLINE_R[g];
-    let at = null;
-    for (const k of [1, 1.5, 2.1]) {
-      const p = [c.p[0] + c.dir[0] * (c.dist + r) * k, c.p[1] + c.dir[1] * (c.dist + r) * k];
-      if (free(p, r)) { at = p; break; }
+    // tendrils lean the way the line travels, so the sign looks grown rather than placed
+    const lean = c.tan ? c.tan : [0, 0];
+    const bendSign = rnd() < 0.5 ? -1 : 1;
+    let at = null, ctl = null;
+    for (const k of [1, 1.4, 1.9]) {
+      const reach = (c.dist + r) * k;
+      const p = [c.p[0] + (c.dir[0] + lean[0] * 0.45 * bendSign) * reach, c.p[1] + (c.dir[1] + lean[1] * 0.45 * bendSign) * reach];
+      if (free(p, r)) { at = p; ctl = [c.p[0] + c.dir[0] * reach * 0.55, c.p[1] + c.dir[1] * reach * 0.55]; break; }
       if (!c.dist) break;
     }
     if (!at) continue;
     placed.push([at, r]);
-    const toward = Math.atan2(-c.dir[1], -c.dir[0]) * 180 / Math.PI;
+    let face = c.dir;
+    if (c.dist) {
+      const into = unit(sub(at, ctl));
+      const tip = [at[0] - into[0] * (r * 0.75 + 4), at[1] - into[1] * (r * 0.75 + 4)];
+      const base = [c.p[0] + c.dir[0] * W * 0.4, c.p[1] + c.dir[1] * W * 0.4];
+      o.push(`<path d="${ribbonD(curveSamples([base, ctl, tip]), q => W * (0.62 - 0.48 * q.u))}" fill="${ink}" stroke="none"/>`);
+      face = into;
+    }
+    const toward = Math.atan2(-face[1], -face[0]) * 180 / Math.PI;
     if (g === 'eye') o.push(`<g transform="translate(${pt(at)}) scale(.3)">${horusGlyph(ink, W * 0.8 / 0.3)}</g>`);
-    if (g === 'crescent') o.push(`<path transform="translate(${pt(at)}) rotate(${f(c.dist ? toward : -90)})" d="M0 -21 A21 21 0 0 0 0 21 A37 37 0 0 1 0 -21 Z" fill="${ink}" stroke="none"/>`);
+    if (g === 'crescent') o.push(`<path transform="translate(${pt(at)}) rotate(${f(c.dist ? toward + 180 : -90)})" d="M0 -21 A21 21 0 0 0 0 21 A37 37 0 0 1 0 -21 Z" fill="${ink}" stroke="none"/>`);
     if (g === 'moon') o.push(moonGlyph(at, 16, [0.25, 0.375, 0.625, 0.75][Math.floor(rnd() * 4)], ink, sw));
     if (g === 'star8') o.push(`<path d="${star(at, 8, 24, 9)}" fill="${ink}" stroke="none"/>`);
     if (g === 'star4') o.push(`<path d="${star(at, 4, 21, 5)}" fill="${ink}" stroke="none"/>`);
-    if (g === 'dots') for (const d of [[0, -12], [-11, 8], [11, 8]]) o.push(`<circle cx="${f(at[0] + d[0])}" cy="${f(at[1] + d[1])}" r="4.8" fill="${ink}" stroke="none"/>`);
+    // three beads that carry the tendril on, each smaller than the last
+    if (g === 'dots') [[-11, 5], [2, 3.9], [13, 2.8]].forEach(([k, rr]) =>
+      o.push(`<circle cx="${f(at[0] + face[0] * k)}" cy="${f(at[1] + face[1] * k)}" r="${rr}" fill="${ink}" stroke="none"/>`));
   }
   return o.join('');
+}
+
+// a crescent that cups the start ring, open toward the line it releases
+function cradleSVG(start, startCtl, ringR, W, ink) {
+  const t = unit(sub(startCtl, start), [0, 1]), base = Math.atan2(t[1], t[0]);
+  const R = ringR + W * 1.3 + 9, qs = [];
+  for (let i = 0; i <= 40; i++) {
+    const a = base + (0.32 + 1.36 * i / 40) * Math.PI, u = i / 40;
+    qs.push({ p: [start[0] + R * Math.cos(a), start[1] + R * Math.sin(a)], t: [-Math.sin(a), Math.cos(a)], u });
+  }
+  return `<path d="${ribbonD(qs, q => W * 0.9 * Math.sin(Math.PI * q.u) + 0.3)}" fill="${ink}" stroke="none"/>`;
 }
 
 // crescents at the four quarters, sparkles on the diagonals
@@ -764,11 +836,22 @@ function buildSVG(an, s, col, opt = {}) {
     const ringR = hole - W * 0.45;
     const anim = opt.animate ? ' class="draw" pathLength="1"' : '';
     const seed = hash32(an.unique.join('') + s.method + s.line);
-    const hatch = s.hatch === 'dashes' ? dashSVG(path.segs, W, hole, mulberry32(seed)) : hatchSVG(path.segs, s.hatch, W, hole);
-    const inline = inlineSVG(s.inl, pts, path, W, col.ink, mulberry32(seed ^ 0x9e3779b9), hole);
+    const hatch = s.hatch === 'dashes' ? dashSVG(path.segs, W, hole, mulberry32(seed), col.ink) : hatchSVG(path.segs, s.hatch, W, hole);
+    const ornate = s.inl && s.inl !== 'none';
+    let inline = ornate ? inlineSVG(s.inl, pts, path, W, col.ink, mulberry32(seed ^ 0x9e3779b9)) : '';
+    if (ornate) {
+      inline += cradleSVG(path.start, path.startCtl, hole - W * 0.45, W, col.ink);
+      const sr = W * 1.1 + 5;
+      inline += `<path d="${star(e1, 4, sr, sr * 0.28)}${star(e2, 4, sr, sr * 0.28)}" fill="${col.ink}" stroke="none"/>`;
+    }
+    let body;
+    if (s.calli) {
+      const c = calligraphy(path, pts, W);
+      body = `<g fill="${col.ink}" stroke="none" mask="url(#${id}m)"${opt.animate ? ' class="fade"' : ''}><path d="${c.d}"/>${c.joins}</g>`;
+    } else body = `<path d="${path.d}" stroke-width="${f(W)}" mask="url(#${id}m)"${anim}/>`;
     for (const t of copies) {
       o.push(`<g${t ? ` transform="${t}"` : ''}>`);
-      o.push(`<path d="${path.d}" stroke-width="${f(W)}" mask="url(#${id}m)"${anim}/>`);
+      o.push(body);
       if (hatch) o.push(hatch);
       if (inline) o.push(inline);
       o.push(`<circle cx="${f(path.start[0])}" cy="${f(path.start[1])}" r="${f(ringR)}" stroke-width="${f(W * 0.8)}"/>`);
@@ -799,7 +882,7 @@ const T = {
     ink_ink: 'Ink', ink_gold: 'Gold', ink_ember: 'Ember', ink_verd: 'Verdigris',
     vowels: 'Remove vowels', guide: 'Show construction', glow: 'Glow', nodes: 'Mark each letter',
     ornaments: 'Ornaments', hatch: 'Strokes', orn: 'Ring ornament', eye: 'Eye', accents: 'Crescents and stars',
-    inl: 'In the pattern', i_none: 'None', i_stars: 'Stars and dots', i_moons: 'Moons', i_eyes: 'Eyes', i_mixed: 'Mixed',
+    inl: 'In the pattern', calli: 'Calligraphic line', i_none: 'None', i_stars: 'Stars and dots', i_moons: 'Moons', i_eyes: 'Eyes', i_mixed: 'Mixed',
     h_none: 'None', h_dashes: 'Parallel dashes', h_ticks: 'Ticks', h_ladder: 'Ladder', h_feather: 'Feathered', h_double: 'Double line',
     o_none: 'None', o_moon: 'Moon phases', o_planets: 'Planets', o_zodiac: 'Zodiac', o_sun: 'Sun rays', o_stars: 'Stars',
     e_none: 'None', 'e_horus-top': 'Eye of Horus, above', 'e_horus-mid': 'Eye of Horus, behind',
@@ -829,7 +912,7 @@ const T = {
     ink_ink: 'Тушь', ink_gold: 'Золото', ink_ember: 'Киноварь', ink_verd: 'Патина',
     vowels: 'Убрать гласные', guide: 'Показать построение', glow: 'Свечение', nodes: 'Отметить буквы',
     ornaments: 'Украшения', hatch: 'Штрихи', orn: 'Орнамент кольца', eye: 'Глаз', accents: 'Полумесяцы и звёзды',
-    inl: 'В узоре', i_none: 'Нет', i_stars: 'Звёзды и точки', i_moons: 'Луны', i_eyes: 'Глаза', i_mixed: 'Всё вместе',
+    inl: 'В узоре', calli: 'Каллиграфическая линия', i_none: 'Нет', i_stars: 'Звёзды и точки', i_moons: 'Луны', i_eyes: 'Глаза', i_mixed: 'Всё вместе',
     h_none: 'Нет', h_dashes: 'Черточки вдоль', h_ticks: 'Насечки', h_ladder: 'Лесенка', h_feather: 'Оперение', h_double: 'Двойная линия',
     o_none: 'Нет', o_moon: 'Фазы луны', o_planets: 'Планеты', o_zodiac: 'Зодиак', o_sun: 'Солнечные лучи', o_stars: 'Звёзды',
     e_none: 'Нет', 'e_horus-top': 'Глаз Гора сверху', 'e_horus-mid': 'Глаз Гора за сигилом',
@@ -870,7 +953,7 @@ const ui0 = (navigator.language || 'en').toLowerCase().startsWith('ru') ? 'ru' :
 const DEFAULTS = {
   word: ui0 === 'ru' ? 'Свобода' : 'Clarity', ui: ui0,
   method: 'wheel', line: 'flow', sym: 'none', frame: 'double', ink: 'ink',
-  hatch: 'dashes', inl: 'mixed', orn: 'none', eye: 'none', accents: false,
+  hatch: 'dashes', inl: 'mixed', calli: true, orn: 'none', eye: 'none', accents: false,
   weight: 7, vowels: true, guide: false, glow: false, nodes: false, transparent: false
 };
 let S = { ...DEFAULTS };
@@ -919,7 +1002,7 @@ function writeForm() {
   form.querySelector(`[name=ink][value=${S.ink}]`).checked = true;
   $('sym').value = S.sym; $('frame').value = S.frame; $('weight').value = S.weight;
   $('hatch').value = S.hatch; $('inl').value = S.inl; $('orn').value = S.orn; $('eye').value = S.eye;
-  for (const k of ['vowels', 'guide', 'glow', 'nodes', 'transparent', 'accents']) $(k).checked = S[k];
+  for (const k of ['vowels', 'guide', 'glow', 'nodes', 'transparent', 'accents', 'calli']) $(k).checked = S[k];
 }
 function readForm() {
   const fd = new FormData(form);
@@ -927,7 +1010,7 @@ function readForm() {
   S.method = fd.get('method'); S.line = fd.get('line'); S.ink = fd.get('ink');
   S.sym = $('sym').value; S.frame = $('frame').value; S.weight = +$('weight').value;
   S.hatch = $('hatch').value; S.inl = $('inl').value; S.orn = $('orn').value; S.eye = $('eye').value;
-  for (const k of ['vowels', 'guide', 'glow', 'nodes', 'transparent', 'accents']) S[k] = $(k).checked;
+  for (const k of ['vowels', 'guide', 'glow', 'nodes', 'transparent', 'accents', 'calli']) S[k] = $(k).checked;
 }
 
 function renderSteps(an) {
