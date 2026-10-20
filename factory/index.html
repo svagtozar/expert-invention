@@ -1,0 +1,976 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Фабрика вероятностей</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: recipe on the left, the observation stage in the middle, shop and tabs on the right; on phones the stage comes first. */
+:root {
+  --paper: #eceef1;
+  --surface: #f7f8fa;
+  --stage: #fbfbfc;
+  --ink: #15181d;
+  --muted: #5d646e;
+  --line: #d4d8de;
+  --accent: #2457c5;
+  --good: #1d7a4f;
+  --bad: #b23b2a;
+  --v0: #5a76ad;
+  --v1: #2f8a7c;
+  --v2: #cf5f27;
+  --font-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: #0e1014; --surface: #151820; --stage: #11141a; --ink: #e6e9ee; --muted: #8d95a1; --line: #272c36;
+    --accent: #7aa2ff; --good: #4cc38a; --bad: #ff7a66; --v0: #4b6aa3; --v1: #2f9a88; --v2: #e07a3c;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --paper: #0e1014; --surface: #151820; --stage: #11141a; --ink: #e6e9ee; --muted: #8d95a1; --line: #272c36;
+  --accent: #7aa2ff; --good: #4cc38a; --bad: #ff7a66; --v0: #4b6aa3; --v1: #2f9a88; --v2: #e07a3c;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font: 400 14px/1.45 var(--font-body);
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 16px 40px;
+}
+.num, .kpi b, .mini, time { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.wrap { max-width: 1320px; margin: 0 auto; display: grid; gap: 16px; }
+
+header { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 12px 24px; border-bottom: 1px solid var(--line); padding-bottom: 12px; }
+h1 { font: 600 1.45rem/1.1 var(--font-mono); letter-spacing: -.01em; margin: 0; }
+.tag { color: var(--muted); font-size: 13px; }
+.kpis { display: flex; flex-wrap: wrap; gap: 8px 22px; }
+.kpi { display: grid; min-width: 0; }
+.kpi .k { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
+.kpi b { font-size: 18px; font-weight: 500; }
+.kpi small { color: var(--muted); font: 400 11px var(--font-mono); }
+
+main { display: grid; grid-template-columns: 270px minmax(0, 1fr) 320px; gap: 16px; align-items: start; }
+@media (max-width: 1100px) {
+  main { grid-template-columns: minmax(0, 1fr) 300px; }
+  .stagep { grid-column: 1 / -1; }
+}
+@media (max-width: 720px) {
+  main { grid-template-columns: minmax(0, 1fr); }
+  .stagep { order: 1; } .shop { order: 2; } .recipe { order: 3; }
+}
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 14px; min-width: 0; }
+h2 { font: 600 11px var(--font-mono); text-transform: uppercase; letter-spacing: .09em; color: var(--muted); margin: 0 0 10px; }
+.muted { color: var(--muted); }
+.sub { color: var(--muted); font-size: 12px; }
+
+button, select {
+  font: inherit; color: inherit; background: transparent;
+  border: 1px solid var(--line); border-radius: 7px; padding: 6px 10px; cursor: pointer;
+}
+select { background: var(--stage); padding: 5px 8px; min-width: 0; }
+button:hover:not(:disabled) { border-color: var(--accent); }
+button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+button:disabled { opacity: .42; cursor: default; }
+button.primary { background: var(--accent); border-color: var(--accent); color: var(--surface); font-weight: 600; }
+button.on { border-color: var(--good); color: var(--good); }
+
+.card { border: 1px solid var(--line); border-radius: 8px; padding: 10px; background: var(--stage); display: grid; gap: 8px; }
+.row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.die { font: 600 20px var(--font-mono); }
+.slots { list-style: none; margin: 10px 0; padding: 0; display: grid; gap: 8px; }
+.idx { font: 600 12px var(--font-mono); color: var(--muted); width: 18px; }
+.slot select { flex: 1; }
+.thr { display: grid; gap: 4px; font-size: 12px; color: var(--muted); }
+.thr input { width: 100%; accent-color: var(--accent); }
+.mini { font-size: 11.5px; color: var(--muted); }
+.stack { display: grid; gap: 8px; }
+.stack > button { text-align: left; }
+
+canvas { display: block; width: 100%; height: clamp(320px, 44vw, 470px); background: var(--stage); border: 1px solid var(--line); border-radius: 8px; }
+.stats { display: flex; flex-wrap: wrap; gap: 4px 20px; margin-top: 10px; font-size: 12.5px; }
+.stats b { font-family: var(--font-mono); font-weight: 500; }
+.log { list-style: none; margin: 10px 0 0; padding: 10px 0 0; border-top: 1px solid var(--line); display: grid; gap: 4px; font-size: 12.5px; min-height: 60px; }
+.log li { animation: in .5s ease-out; }
+.log li.rare { color: var(--v2); }
+.log li.good { color: var(--good); }
+.log time { color: var(--muted); font-size: 11px; margin-right: 6px; }
+@keyframes in { from { opacity: 0; transform: translateY(-3px); } }
+
+.roll { width: 100%; padding: 14px; font-size: 16px; display: flex; justify-content: space-between; align-items: center; }
+.roll .num { font-size: 15px; opacity: .85; }
+.item { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+.item:last-child { border-bottom: 0; }
+.item > div { min-width: 0; }
+.item button { white-space: nowrap; flex-shrink: 0; }
+.tabs { display: flex; gap: 4px; margin: 14px 0 4px; border-bottom: 1px solid var(--line); }
+.tabs button { border: 0; border-bottom: 2px solid transparent; border-radius: 0; padding: 8px 8px; color: var(--muted); }
+.tabs button.cur { color: var(--ink); border-bottom-color: var(--accent); }
+.ok { color: var(--good); } .no { color: var(--bad); }
+.bar { height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; }
+.bar i { display: block; height: 100%; background: var(--accent); width: 0; transition: width .3s; }
+p { margin: 8px 0; }
+footer { display: flex; flex-wrap: wrap; gap: 8px; justify-content: space-between; align-items: center; color: var(--muted); font-size: 12px; }
+footer .btns { display: flex; gap: 8px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <h1>Фабрика вероятностей</h1>
+      <div class="tag">Одиночный бросок — лотерея. Миллион бросков — бухгалтерия.</div>
+    </div>
+    <div class="kpis">
+      <div class="kpi"><span class="k">Ожидание</span><b id="kE">0</b></div>
+      <div class="kpi"><span class="k">в секунду</span><b id="kRate">0</b><small id="kFact"></small></div>
+      <div class="kpi"><span class="k">бросков/с</span><b id="kRolls">0</b></div>
+      <div class="kpi"><span class="k">всего бросков</span><b id="kAll">0</b></div>
+      <div class="kpi" id="kpP" hidden><span class="k">Точность</span><b id="kP">0</b></div>
+      <div class="kpi" id="kpB" hidden><span class="k">биты</span><b id="kB">0</b></div>
+    </div>
+  </header>
+
+  <main>
+    <section class="panel recipe" aria-label="Рецепт">
+      <h2>Рецепт</h2>
+      <div id="recipe"></div>
+    </section>
+
+    <section class="panel stagep" aria-label="Наблюдение">
+      <canvas id="cv" aria-label="Лента с исходами и гистограмма выхода"></canvas>
+      <div class="stats" id="stats"></div>
+      <ul class="log" id="log"></ul>
+    </section>
+
+    <section class="panel shop" aria-label="Цех">
+      <h2>Цех</h2>
+      <button class="roll primary" data-act="roll">Бросить <span class="num" id="lastRoll"></span></button>
+      <div class="item">
+        <div>
+          <b>Броскомёт</b> <span class="muted num">×<span id="rCount">0</span></span>
+          <div class="sub">1 бросок/с каждый, скорость ×2 на каждом 25-м · следующее удвоение на <span id="rNext" class="num"></span></div>
+        </div>
+        <button data-act="roller" id="rBtn">Купить · <span id="rCost" class="num"></span></button>
+      </div>
+      <nav class="tabs" id="tabs">
+        <button data-act="tab" data-tab="contracts">Контракты</button>
+        <button data-act="tab" data-tab="research">Исследования</button>
+        <button data-act="tab" data-tab="prestige">Престиж</button>
+      </nav>
+      <div id="tabBody"></div>
+    </section>
+  </main>
+
+  <footer>
+    <span>Все числа честные: распределения считаются точно, исходы — настоящие случайные.</span>
+    <span class="btns">
+      <button data-act="sound" id="soundBtn">Звук: выкл</button>
+      <button data-act="reset" id="resetBtn">Сбросить прогресс</button>
+    </span>
+  </footer>
+</div>
+
+<script id="core">
+'use strict';
+// Exact discrete distributions over integers lo..lo+p.length-1, plus the game's balance constants.
+// This block touches no DOM so it can be loaded and tested on its own.
+const PF = (() => {
+  const die = n => ({ lo: 1, p: new Float64Array(n).fill(1 / n) });
+  const hi = d => d.lo + d.p.length - 1;
+
+  // Reroll once when the value is below t.
+  function reroll(d, t) {
+    let q = 0;
+    for (let i = 0; i < d.p.length; i++) if (d.lo + i < t) q += d.p[i];
+    const p = new Float64Array(d.p.length);
+    for (let i = 0; i < p.length; i++) p[i] = (d.lo + i >= t ? d.p[i] : 0) + q * d.p[i];
+    return { lo: d.lo, p };
+  }
+  // Larger of two independent draws: P(max <= v) = F(v)^2.
+  function maxOf(d) {
+    const p = new Float64Array(d.p.length);
+    let F = 0, prev = 0;
+    for (let i = 0; i < p.length; i++) { F += d.p[i]; const F2 = F * F; p[i] = F2 - prev; prev = F2; }
+    return { lo: d.lo, p };
+  }
+  // Sum of two independent draws (convolution).
+  function sumOf(d) {
+    const n = d.p.length, p = new Float64Array(2 * n - 1);
+    for (let i = 0; i < n; i++) { const a = d.p[i]; if (a) for (let j = 0; j < n; j++) p[i + j] += a * d.p[j]; }
+    return { lo: 2 * d.lo, p };
+  }
+  function mean(d) { let s = 0; for (let i = 0; i < d.p.length; i++) s += (d.lo + i) * d.p[i]; return s; }
+  function sd(d) {
+    const m = mean(d); let s = 0;
+    for (let i = 0; i < d.p.length; i++) { const x = d.lo + i - m; s += x * x * d.p[i]; }
+    return Math.sqrt(s);
+  }
+  function entropy(d) { let h = 0; for (const q of d.p) if (q > 0) h -= q * Math.log2(q); return h; }
+  function cdf(d) {
+    const c = new Float64Array(d.p.length); let s = 0;
+    for (let i = 0; i < c.length; i++) { s += d.p[i]; c[i] = s; }
+    c[c.length - 1] = 1;
+    return c;
+  }
+  function sample(d, c, u) {
+    let a = 0, b = c.length - 1;
+    while (a < b) { const m = (a + b) >> 1; if (c[m] < u) a = m + 1; else b = m; }
+    return d.lo + a;
+  }
+  // Rerolling below the upstream mean is the optimal single-reroll rule.
+  const optimalT = d => Math.ceil(mean(d) - 1e-9);
+
+  function apply(s, d) {
+    if (!s || !s.m) return d;
+    if (s.m === 'reroll') return reroll(d, s.t);
+    if (s.m === 'max') return maxOf(d);
+    if (s.m === 'sum') return sumOf(d);
+    return d;
+  }
+  function stages(n, slots) {
+    const st = [die(n)];
+    for (const s of slots) st.push(apply(s, st[st.length - 1]));
+    return st;
+  }
+
+  const DICE = [6, 8, 12, 20, 100];
+  const DIE_COST = [0, 500, 2e4, 1e6, 1e8];
+  const rollerCost = n => 10 * 1.15 ** n;
+  const rollerRate = n => n * 2 ** Math.floor(n / 25);
+  const slotCost = n => 50 * 6 ** n;
+  const MAX_SLOTS = 8, MAX_SUMS = 3;
+  // A contract holds while the output's σ/E stays below cv; it pays `rate` Precision per output.
+  const CONTRACTS = [
+    { cv: 0.45, rate: 0.01 }, { cv: 0.35, rate: 0.03 }, { cv: 0.25, rate: 0.1 },
+    { cv: 0.15, rate: 0.4 }, { cv: 0.08, rate: 2 },
+  ];
+  const PUP = {
+    cal: { name: 'Калибровка', effect: '×1,25 к Ожиданию', cost: n => 10 * 3 ** n },
+    res: { name: 'Резонанс', effect: '×1,5 к броскам/с', cost: n => 25 * 4 ** n },
+  };
+  const H_UNIT = 1.5e5;
+  const bitsFor = sumH => Math.floor(Math.sqrt(sumH / H_UNIT));
+  const RESEARCH = [
+    { id: 'curve', cost: 1, name: 'Теоретическая кривая', desc: 'поверх гистограммы появляется точное распределение' },
+    { id: 'max', cost: 1, name: 'Максимум из двух', desc: 'машина: больший из двух исходов' },
+    { id: 'numbers', cost: 2, name: 'Числа рецепта', desc: 'точные E, σ и КПД рецепта и каждого этапа' },
+    { id: 'entropy', cost: 2, name: 'Энтропиметр', desc: 'энтропия выхода и прогноз битов' },
+    { id: 'autot', cost: 2, name: 'Оптимальная остановка', desc: 'кнопка, выставляющая лучшие пороги переброса' },
+    { id: 'autobuy', cost: 2, name: 'Автопокупка', desc: 'броскомёты покупаются сами' },
+    { id: 'sum', cost: 4, name: 'Сумматор', desc: 'машина: сумма двух исходов' },
+    { id: 'offline', cost: 3, name: 'Оффлайн-прогресс', desc: 'фабрика работает, пока вкладка закрыта (до 8 ч)' },
+    { id: 'presets', cost: 4, name: 'Пресеты рецептов', desc: 'два слота, чтобы сохранять и мгновенно менять рецепт' },
+  ];
+
+  return {
+    die, hi, reroll, maxOf, sumOf, mean, sd, entropy, cdf, sample, optimalT, apply, stages,
+    DICE, DIE_COST, rollerCost, rollerRate, slotCost, MAX_SLOTS, MAX_SUMS, CONTRACTS, PUP, H_UNIT, bitsFor, RESEARCH,
+  };
+})();
+if (typeof module !== 'undefined') module.exports = PF;
+</script>
+
+<script>
+'use strict';
+const $ = s => document.querySelector(s);
+const SPEED = Math.max(1, +new URLSearchParams(location.search).get('speed') || 1);
+const KEY = 'pfactory.v1';
+const NB = ' ';
+const MACH = {
+  reroll: { name: 'Перебросчик', need: null },
+  max: { name: 'Максимум из двух', need: 'max' },
+  sum: { name: 'Сумматор', need: 'sum' },
+};
+
+// ---------- state ----------
+const fresh = () => ({
+  e: 0, p: 0, bits: 0, bitsTotal: 0, sumH: 0,
+  rollers: 0, slots: [], die: 0, cal: 0, res: 0, contract: -1,
+  research: {}, presets: [null, null], hints: {},
+  runRolls: 0, allRolls: 0, prestiges: 0, sound: false, last: Date.now(),
+});
+function load() {
+  try { const raw = localStorage.getItem(KEY); if (raw) return Object.assign(fresh(), JSON.parse(raw)); } catch (e) {}
+  return fresh();
+}
+function save() {
+  S.last = Date.now();
+  try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) {}
+}
+let S = load();
+const UI = { tab: 'contracts' };
+
+// ---------- formatting ----------
+const SUP = { '0': '⁰', '1': '¹', '2': '²', '3': '³', '4': '⁴', '5': '⁵', '6': '⁶', '7': '⁷', '8': '⁸', '9': '⁹', '-': '⁻' };
+function fmt(x, d) {
+  if (!isFinite(x)) return '∞';
+  const a = Math.abs(x);
+  if (a < 1e4) return x.toLocaleString('ru-RU', { maximumFractionDigits: d ?? (a < 10 ? 2 : a < 100 ? 1 : 0) });
+  const U = ['', 'тыс', 'млн', 'млрд', 'трлн'];
+  const k = Math.floor(Math.log10(a) / 3);
+  if (k < U.length) return (x / 10 ** (3 * k)).toLocaleString('ru-RU', { maximumFractionDigits: 2 }) + NB + U[k];
+  const ex = Math.floor(Math.log10(a));
+  return (x / 10 ** ex).toLocaleString('ru-RU', { maximumFractionDigits: 2 }) + '·10' + String(ex).replace(/./g, c => SUP[c]);
+}
+const plural = (n, one, few, many) => (n % 10 === 1 && n % 100 !== 11 ? one : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 10 || n % 100 >= 20) ? few : many);
+const pct = x => (x * 100).toLocaleString('ru-RU', { maximumFractionDigits: 1 }) + '%';
+const clock = () => new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+// ---------- recipe ----------
+let R, HG;
+function recompute() {
+  const st = [PF.die(PF.DICE[S.die])];
+  for (const s of S.slots) {
+    const d = st[st.length - 1];
+    if (s.m === 'reroll') s.t = Math.max(d.lo, Math.min(PF.hi(d), s.t | 0));
+    st.push(PF.apply(s, d));
+  }
+  const out = st[st.length - 1];
+  R = { st, cdfs: st.map(PF.cdf), out, cdf: null, E: PF.mean(out), sd: PF.sd(out), H: PF.entropy(out), lo: out.lo, hi: PF.hi(out) };
+  R.cdf = R.cdfs[R.cdfs.length - 1];
+  R.cv = R.sd / R.E;
+  R.eff = R.E / R.hi;
+  R.pHi = out.p[out.p.length - 1];
+  R.upper = new Float64Array(out.p.length); // P(X >= v)
+  for (let i = out.p.length - 1, s = 0; i >= 0; i--) { s += out.p[i]; R.upper[i] = s; }
+  if (S.contract >= 0 && R.cv > PF.CONTRACTS[S.contract].cv) {
+    log(`Контракт σ/E < ${fmt(PF.CONTRACTS[S.contract].cv)} сорван: рецепт стал слишком разбросанным.`);
+    S.contract = -1;
+  }
+  resetHist();
+  tokens = [];
+}
+
+function resetHist() {
+  const span = R.hi - R.lo + 1, B = Math.min(span, 48), w = span / B;
+  const th = new Float64Array(B);
+  for (let i = 0; i < R.out.p.length; i++) th[Math.min(B - 1, Math.floor(i / w))] += R.out.p[i];
+  const prev = HG && HG.B === B ? HG : null;
+  HG = {
+    B, w, th, cnt: new Float64Array(B), n: 0, sx: 0, sxx: 0,
+    h: prev ? prev.h : new Float64Array(B), hv: new Float64Array(B),
+    scale: prev ? prev.scale : Math.max(...th) * 1.2, conv: false, flash: 0, tv: 1,
+    run: 0, bestRun: 0, bestTail: 1e-3,
+  };
+}
+function histAdd(v, wgt = 1) {
+  const b = Math.min(HG.B - 1, Math.floor((v - R.lo) / HG.w));
+  HG.cnt[b] += wgt; HG.n += wgt; HG.sx += v * wgt; HG.sxx += v * v * wgt;
+}
+const bucketOf = v => Math.min(HG.B - 1, Math.floor((v - R.lo) / HG.w));
+
+// Draw one output and record what each machine did to it, for the belt animation.
+function trace() {
+  let v = PF.sample(R.st[0], R.cdfs[0], Math.random());
+  const vals = [v], ev = [];
+  S.slots.forEach((s, i) => {
+    const draw = () => PF.sample(R.st[i], R.cdfs[i], Math.random());
+    let e = { k: 'pass' };
+    if (s.m === 'reroll') {
+      if (v < s.t) { const b = draw(); e = { k: 'reroll', a: v, b }; v = b; } else e = { k: 'keep' };
+    } else if (s.m === 'max') { const b = draw(); e = { k: 'max', a: v, b }; v = Math.max(v, b); }
+    else if (s.m === 'sum') { const b = draw(); e = { k: 'sum', a: v, b }; v += b; }
+    ev.push(e); vals.push(v);
+  });
+  return { v, ev, vals };
+}
+
+// ---------- economy ----------
+const rate = () => PF.rollerRate(S.rollers) * 1.5 ** S.res;
+const mult = () => (1 + 0.1 * S.bitsTotal) * 1.25 ** S.cal * (S.contract >= 0 ? 0.5 : 1);
+function gauss() { let u = 0; while (!u) u = Math.random(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * Math.random()); }
+
+function observe(v) {
+  if (v === R.hi) {
+    HG.run++;
+    const odds = 1 / R.pHi ** HG.run;
+    if (HG.run >= 2 && odds >= 100 && HG.run > HG.bestRun) {
+      HG.bestRun = HG.run;
+      log(`Серия: ${HG.run} ${plural(HG.run, 'максимум', 'максимума', 'максимумов')} подряд (${v}) — шанс 1 к ${fmt(Math.round(odds))}`, 'rare');
+    }
+  } else HG.run = 0;
+  const tp = R.upper[v - R.lo];
+  if (tp < HG.bestTail && v > R.E + 2 * R.sd) {
+    HG.bestTail = tp;
+    log(`Редкий исход ${v}: P(X ≥ ${v}) = 1 к ${fmt(Math.round(1 / tp))}`, 'rare');
+  }
+}
+function credit(n, total) {
+  const m = mult();
+  S.e += total * m;
+  S.sumH += n * R.H;
+  S.runRolls += n;
+  const before = S.allRolls;
+  S.allRolls += n;
+  const k0 = Math.floor(Math.log10(Math.max(1, before))), k1 = Math.floor(Math.log10(S.allRolls));
+  if (k1 > k0 && k1 >= 3) log(`10${String(k1).replace(/./g, c => SUP[c])} бросков за всё время.`, 'good');
+  if (S.contract >= 0) S.p += n * PF.CONTRACTS[S.contract].rate;
+  return total * m;
+}
+function produce(n) {
+  if (n <= 0) return 0;
+  let total = 0;
+  if (n <= 200) {
+    for (let i = 0; i < n; i++) { const v = PF.sample(R.out, R.cdf, Math.random()); total += v; histAdd(v); observe(v); }
+  } else {
+    // Law of large numbers: the sum of n outputs is n·E plus a σ√n wobble.
+    total = n * R.E + gauss() * R.sd * Math.sqrt(n);
+    for (let i = 0; i < 200; i++) histAdd(PF.sample(R.out, R.cdf, Math.random()), n / 200);
+  }
+  return credit(n, total);
+}
+
+let carry = 0, factEma = 0, lastT = performance.now();
+function step(dt) {
+  carry += rate() * dt;
+  const n = Math.floor(carry); carry -= n;
+  const got = produce(n);
+  factEma = factEma * 0.92 + (got / dt) * 0.08;
+  if (S.research.autobuy) {
+    for (let i = 0; i < 100 && S.e >= PF.rollerCost(S.rollers); i++) buyRoller();
+  }
+}
+setInterval(() => {
+  const now = performance.now();
+  const dt = Math.min(5, (now - lastT) / 1000) * SPEED;
+  lastT = now;
+  step(dt);
+  checkConvergence();
+  refresh();
+}, 100);
+setInterval(save, 10000);
+document.addEventListener('visibilitychange', () => { if (document.hidden) save(); });
+window.addEventListener('pagehide', save);
+
+function checkConvergence() {
+  if (HG.n < 300) return;
+  let tv = 0;
+  for (let b = 0; b < HG.B; b++) tv += Math.abs(HG.cnt[b] / HG.n - HG.th[b]);
+  HG.tv = tv / 2;
+  if (!HG.conv && HG.tv < 0.025) {
+    HG.conv = true; HG.flash = 1.6;
+    log(`Сошлось: после ${fmt(HG.n)} исходов гистограмма отличается от теории на ${pct(HG.tv)}.`, 'good');
+  }
+}
+
+// ---------- actions ----------
+function hint(id, msg) { if (!S.hints[id]) { S.hints[id] = 1; log(msg); } }
+function buyRoller() {
+  const c = PF.rollerCost(S.rollers);
+  if (S.e < c) return;
+  S.e -= c; S.rollers++;
+  if (S.rollers % 25 === 0) log(`${S.rollers}-й броскомёт: скорость удвоена.`, 'good');
+  hint('roller', 'Броскомёт бросает сам. На 25-м скорость удвоится.');
+}
+const ACT = {
+  roll() {
+    const tr = trace();
+    histAdd(tr.v); observe(tr.v);
+    credit(1, tr.v);
+    $('#lastRoll').textContent = tr.v;
+    spawn(tr);
+  },
+  roller() { buyRoller(); },
+  slot() {
+    const c = PF.slotCost(S.slots.length);
+    if (S.e < c || S.slots.length >= PF.MAX_SLOTS) return;
+    S.e -= c;
+    S.slots.push({ m: 'reroll', t: 2 });
+    recompute(); renderRecipe();
+    hint('slot', 'Перебросчик перебрасывает исход ниже порога. Найдите порог, при котором среднее выше всего: гистограмма и x̄ подскажут.');
+  },
+  die() {
+    const c = PF.DIE_COST[S.die + 1];
+    if (c === undefined || S.e < c) return;
+    S.e -= c;
+    const k = PF.DICE[S.die + 1] / PF.DICE[S.die];
+    S.die++;
+    for (const s of S.slots) if (s.m === 'reroll') s.t = Math.round(s.t * k);
+    recompute(); renderRecipe();
+    log(`Новая грань: d${PF.DICE[S.die]}. Пороги перебросчиков надо подобрать заново.`);
+  },
+  contract(b) {
+    const i = +b.dataset.i;
+    if (S.contract === i) S.contract = -1;
+    else if (R.cv <= PF.CONTRACTS[i].cv) {
+      S.contract = i;
+      hint('contract', 'Контракт забирает половину Ожидания, но платит Точностью — она покупает постоянные множители.');
+    }
+    renderTab();
+  },
+  pup(b) {
+    const k = b.dataset.k, c = PF.PUP[k].cost(S[k]);
+    if (S.p < c) return;
+    S.p -= c; S[k]++;
+    renderTab();
+  },
+  research(b) {
+    const r = PF.RESEARCH.find(x => x.id === b.dataset.id);
+    if (!r || S.research[r.id] || S.bits < r.cost) return;
+    S.bits -= r.cost; S.research[r.id] = 1;
+    log(`Изучено: ${r.name}.`, 'good');
+    renderAll();
+  },
+  prestige(b) {
+    const g = PF.bitsFor(S.sumH);
+    if (g < 1) return;
+    if (!b.dataset.armed) { arm(b, 'Точно? Нажмите ещё раз'); return; }
+    S.bits += g; S.bitsTotal += g; S.prestiges++;
+    Object.assign(S, { e: 0, p: 0, sumH: 0, rollers: 0, slots: [], die: 0, cal: 0, res: 0, contract: -1, runRolls: 0 });
+    carry = 0;
+    log(`Сброс №${S.prestiges}: +${g} бит. Всего бит: ${S.bitsTotal}, Ожидание ×${fmt(1 + 0.1 * S.bitsTotal)}.`, 'good');
+    UI.tab = 'research';
+    recompute(); renderAll(); save();
+  },
+  tab(b) { UI.tab = b.dataset.tab; renderTab(); },
+  sound() {
+    S.sound = !S.sound;
+    if (S.sound) ensureAudio();
+    renderFooter();
+  },
+  reset(b) {
+    if (!b.dataset.armed) { arm(b, 'Точно? Всё пропадёт'); return; }
+    S = fresh(); carry = 0;
+    try { localStorage.removeItem(KEY); } catch (e) {}
+    $('#log').innerHTML = '';
+    recompute(); renderAll();
+    log('Прогресс сброшен. Нажмите «Бросить».');
+  },
+  autot() {
+    let d = PF.die(PF.DICE[S.die]);
+    for (const s of S.slots) { if (s.m === 'reroll') s.t = PF.optimalT(d); d = PF.apply(s, d); }
+    recompute(); renderRecipe();
+  },
+  psave(b) { S.presets[+b.dataset.i] = S.slots.map(s => ({ ...s })); renderRecipe(); },
+  pload(b) {
+    const pr = S.presets[+b.dataset.i];
+    if (!pr) return;
+    S.slots = S.slots.map((s, j) => (pr[j] ? { ...pr[j] } : { m: null, t: 2 }));
+    recompute(); renderRecipe();
+  },
+};
+function arm(b, text) {
+  b.dataset.armed = '1';
+  const old = b.innerHTML;
+  b.textContent = text;
+  setTimeout(() => { if (b.isConnected) { delete b.dataset.armed; b.innerHTML = old; } }, 3000);
+}
+document.addEventListener('click', ev => {
+  const b = ev.target.closest('[data-act]');
+  if (!b || b.disabled) return;
+  ACT[b.dataset.act]?.(b);
+  refresh();
+});
+document.addEventListener('change', ev => {
+  const sel = ev.target.closest('select[data-slot]');
+  if (!sel) return;
+  const s = S.slots[+sel.dataset.slot];
+  s.m = sel.value || null;
+  if (s.m === 'reroll' && !s.t) s.t = 2;
+  recompute(); renderRecipe(); refresh();
+});
+document.addEventListener('input', ev => {
+  const r = ev.target.closest('input[data-thr]');
+  if (!r) return;
+  const i = +r.dataset.thr;
+  S.slots[i].t = +r.value;
+  recompute();
+  $('#t' + i).textContent = r.value;
+  updateMinis();
+  if (UI.tab === 'contracts') renderTab();
+});
+
+// ---------- rendering: panels ----------
+function sumsUsed() { return S.slots.filter(s => s.m === 'sum').length; }
+function renderRecipe() {
+  const N = PF.DICE[S.die], next = PF.DICE[S.die + 1];
+  const opts = (s) => {
+    let h = `<option value=""${!s.m ? ' selected' : ''}>пусто</option>`;
+    for (const [k, m] of Object.entries(MACH)) {
+      if (m.need && !S.research[m.need]) continue;
+      const full = k === 'sum' && s.m !== 'sum' && sumsUsed() >= PF.MAX_SUMS;
+      h += `<option value="${k}"${s.m === k ? ' selected' : ''}${full ? ' disabled' : ''}>${m.name}</option>`;
+    }
+    return h;
+  };
+  const slot = (s, i) => {
+    const up = R.st[i];
+    return `<li class="card slot"><div class="row"><span class="idx">${i + 1}</span><select data-slot="${i}" aria-label="Машина в слоте ${i + 1}">${opts(s)}</select></div>
+      ${s.m === 'reroll' ? `<label class="thr"><span>перебросить, если &lt; <b class="num" id="t${i}">${s.t}</b></span>
+        <input type="range" data-thr="${i}" min="${up.lo}" max="${PF.hi(up)}" value="${s.t}"></label>` : ''}
+      ${S.research.numbers ? `<div class="mini" id="m${i}"></div>` : ''}</li>`;
+  };
+  const presets = S.research.presets ? `<div class="card"><span class="sub">Пресеты</span>${[0, 1].map(i => `<div class="row">
+      <span class="num">${'AB'[i]}</span><span class="btns"><button data-act="psave" data-i="${i}">сохранить</button>
+      <button data-act="pload" data-i="${i}"${S.presets[i] ? '' : ' disabled'}>загрузить</button></span></div>`).join('')}</div>` : '';
+  $('#recipe').innerHTML = `
+    <div class="card"><div class="row"><span class="sub">Источник</span><span class="die">d${N}</span></div>
+      ${next ? `<button data-act="die" data-cost="${PF.DIE_COST[S.die + 1]}">Грань d${next} · <span class="num">${fmt(PF.DIE_COST[S.die + 1])}</span></button>` : '<span class="sub">максимальная грань</span>'}
+      ${S.research.numbers ? `<div class="mini" id="m-src"></div>` : ''}</div>
+    <ol class="slots">${S.slots.map(slot).join('')}</ol>
+    <div class="stack">
+      ${S.slots.length < PF.MAX_SLOTS ? `<button data-act="slot" data-cost="${PF.slotCost(S.slots.length)}">+ Слот для машины · <span class="num">${fmt(PF.slotCost(S.slots.length))}</span></button>` : ''}
+      ${S.research.autot && S.slots.some(s => s.m === 'reroll') ? '<button data-act="autot">Оптимальные пороги</button>' : ''}
+      ${presets}
+    </div>`;
+  updateMinis();
+}
+function updateMinis() {
+  if (!S.research.numbers) return;
+  const t = d => `E ${fmt(PF.mean(d))} · σ ${fmt(PF.sd(d))} · КПД ${pct(PF.mean(d) / PF.hi(d))}`;
+  const src = $('#m-src'); if (src) src.textContent = t(R.st[0]);
+  S.slots.forEach((s, i) => { const el = $('#m' + i); if (el) el.textContent = t(R.st[i + 1]); });
+}
+
+function renderTab() {
+  document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('cur', b.dataset.tab === UI.tab));
+  const body = $('#tabBody');
+  if (UI.tab === 'contracts') {
+    const cvTxt = S.research.numbers ? fmt(R.cv, 3) : (HG.n > 30 ? '≈' + fmt(empSd() / empMean(), 2) : '?');
+    body.innerHTML = `<p class="sub">Контракт забирает половину Ожидания и платит Точностью, пока относительный разброс выхода σ/E ниже порога. Сейчас σ/E = <b class="num">${cvTxt}</b>.</p>
+      ${PF.CONTRACTS.map((c, i) => {
+        const ok = R.cv <= c.cv, on = S.contract === i;
+        return `<div class="item"><div><b class="num">σ/E &lt; ${fmt(c.cv)}</b> <span class="${ok ? 'ok' : 'no'}">${ok ? '✓' : '✗'}</span>
+          <div class="sub">+${fmt(c.rate)} Точности за исход</div></div>
+          <button data-act="contract" data-i="${i}" class="${on ? 'on' : ''}"${!ok && !on ? ' disabled' : ''}>${on ? 'Действует' : 'Взять'}</button></div>`;
+      }).join('')}
+      <h2 style="margin-top:14px">Мастерская точности</h2>
+      ${Object.entries(PF.PUP).map(([k, u]) => `<div class="item"><div><b>${u.name}</b> <span class="muted num">ур. ${S[k]}</span><div class="sub">${u.effect}</div></div>
+        <button data-act="pup" data-k="${k}" data-cost="${u.cost(S[k])}" data-cur="p">${fmt(u.cost(S[k]))} Т</button></div>`).join('')}`;
+  } else if (UI.tab === 'research') {
+    body.innerHTML = `<p class="sub">Биты дают престижные сбросы. Свободно: <b class="num">${S.bits}</b> · всего получено: <b class="num">${S.bitsTotal}</b> (каждый навсегда +10% к Ожиданию).</p>
+      ${PF.RESEARCH.map(r => `<div class="item"><div><b>${r.name}</b><div class="sub">${r.desc}</div></div>
+        ${S.research[r.id] ? '<span class="ok sub">изучено</span>' : `<button data-act="research" data-id="${r.id}" data-cost="${r.cost}" data-cur="bits">${r.cost} бит</button>`}</div>`).join('')}`;
+  } else {
+    body.innerHTML = `<p class="sub">Сброс обнуляет Ожидание, броскомёты, слоты, грани и Точность. Взамен — биты: мера случайности, которую произвела фабрика. Машины, которые сжимают разброс, поднимают Ожидание, но производят меньше битов.</p>
+      <div class="item"><div>Произведено энтропии<div class="sub">бит × исходов в этом забеге</div></div><b class="num" id="pSumH"></b></div>
+      ${S.research.entropy ? `<div class="item"><div>Энтропия выхода<div class="sub">бит на исход сейчас</div></div><b class="num" id="pH"></b></div>
+        <div class="stack"><span class="sub">До следующего бита: <span class="num" id="pNext"></span></span><div class="bar"><i id="pBar"></i></div></div>` : ''}
+      <div class="item"><div>Биты при сбросе</div><b class="num" id="pGain"></b></div>
+      <button class="primary" data-act="prestige" id="pBtn" style="width:100%;margin-top:6px">Сбросить фабрику</button>`;
+  }
+  refresh();
+}
+function renderFooter() { $('#soundBtn').textContent = 'Звук: ' + (S.sound ? 'вкл' : 'выкл'); $('#soundBtn').classList.toggle('on', S.sound); }
+function renderAll() { renderRecipe(); renderTab(); renderFooter(); refresh(); }
+
+const empMean = () => HG.sx / HG.n;
+const empSd = () => Math.sqrt(Math.max(0, HG.sxx / HG.n - empMean() ** 2));
+function refresh() {
+  const r = rate(), m = mult();
+  $('#kE').textContent = fmt(S.e);
+  $('#kRate').textContent = fmt(r * R.E * m);
+  $('#kFact').textContent = r > 0 ? 'факт ' + fmt(factEma) : '';
+  $('#kRolls').textContent = fmt(r);
+  $('#kAll').textContent = fmt(S.allRolls);
+  $('#kpP').hidden = !(S.p > 0 || S.contract >= 0 || S.cal || S.res);
+  $('#kP').textContent = fmt(S.p);
+  $('#kpB').hidden = !(S.bitsTotal > 0 || PF.bitsFor(S.sumH) > 0);
+  $('#kB').textContent = `${S.bits} / ${S.bitsTotal}`;
+  $('#rCount').textContent = S.rollers;
+  $('#rCost').textContent = fmt(PF.rollerCost(S.rollers));
+  $('#rNext').textContent = (Math.floor(S.rollers / 25) + 1) * 25;
+  $('#rBtn').disabled = S.e < PF.rollerCost(S.rollers);
+  document.querySelectorAll('[data-cost]').forEach(b => {
+    const cur = b.dataset.cur === 'p' ? S.p : b.dataset.cur === 'bits' ? S.bits : S.e;
+    b.disabled = cur < +b.dataset.cost;
+  });
+  const gain = PF.bitsFor(S.sumH);
+  const set = (id, t) => { const el = $(id); if (el) el.textContent = t; };
+  set('#pSumH', fmt(S.sumH));
+  set('#pH', fmt(R.H, 3));
+  set('#pGain', gain);
+  const nextH = (gain + 1) ** 2 * PF.H_UNIT, curH = gain ** 2 * PF.H_UNIT;
+  set('#pNext', r > 0 ? `${fmt(nextH - S.sumH)} (≈ ${fmtTime((nextH - S.sumH) / (r * R.H))})` : fmt(nextH - S.sumH));
+  const bar = $('#pBar'); if (bar) bar.style.width = pct(Math.min(1, (S.sumH - curH) / (nextH - curH))).replace(',', '.');
+  const pb = $('#pBtn');
+  if (pb && !pb.dataset.armed) { pb.disabled = gain < 1; pb.textContent = gain < 1 ? 'Нужен хотя бы 1 бит' : `Сбросить и получить ${gain} бит`; }
+  // Observation stats under the canvas.
+  const emp = HG.n > 0 ? `Наблюдаемое: <b>x̄ ${fmt(empMean(), 3)}</b> · <b>s ${fmt(empSd(), 3)}</b> · N <b>${fmt(HG.n)}</b>` : 'Наблюдаемое: исходов ещё нет';
+  const th = S.research.numbers
+    ? `Теория: <b>E ${fmt(R.E, 3)}</b> · <b>σ ${fmt(R.sd, 3)}</b> · КПД <b>${pct(R.eff)}</b>${S.research.entropy ? ` · H <b>${fmt(R.H, 3)}</b> бит` : ''}`
+    : '<span class="muted">Теория: неизвестна (исследование «Числа рецепта»)</span>';
+  $('#stats').innerHTML = `<span>${emp}</span><span>${th}</span>`;
+}
+function fmtTime(s) {
+  if (!isFinite(s)) return '∞';
+  if (s < 60) return Math.ceil(s) + ' с';
+  if (s < 3600) return Math.round(s / 60) + ' мин';
+  return fmt(s / 3600, 1) + ' ч';
+}
+
+function log(msg, kind = '') {
+  const ul = $('#log'), li = document.createElement('li');
+  li.className = kind;
+  li.innerHTML = `<time>${clock()}</time>${msg}`;
+  ul.prepend(li);
+  while (ul.children.length > 7) ul.lastChild.remove();
+}
+
+// ---------- sound ----------
+let AC = null, lastNote = 0;
+function ensureAudio() {
+  if (AC) { AC.resume?.(); return; }
+  try { AC = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { AC = null; }
+}
+document.addEventListener('pointerdown', () => { if (S.sound) ensureAudio(); }, { once: true });
+function note(f) {
+  if (!S.sound || !AC) return;
+  const now = AC.currentTime;
+  if (now - lastNote < 0.07) return;
+  lastNote = now;
+  const PENT = [0, 2, 4, 7, 9], k = Math.round(Math.max(0, Math.min(1, f)) * 9);
+  const semis = Math.floor(k / 5) * 12 + PENT[k % 5];
+  const o = AC.createOscillator(), g = AC.createGain();
+  o.type = 'sine';
+  o.frequency.value = 220 * 2 ** (semis / 12);
+  g.gain.setValueAtTime(0.0001, now);
+  g.gain.exponentialRampToValueAtTime(0.05, now + 0.01);
+  g.gain.exponentialRampToValueAtTime(0.0001, now + 0.6);
+  o.connect(g).connect(AC.destination);
+  o.start(now); o.stop(now + 0.65);
+}
+
+// ---------- rendering: stage ----------
+const cv = $('#cv'), ctx = cv.getContext('2d');
+let W = 0, HC = 0, DPR = 1, C = {};
+function resize() {
+  const r = cv.getBoundingClientRect();
+  DPR = Math.min(2, window.devicePixelRatio || 1);
+  W = r.width; HC = r.height;
+  cv.width = Math.round(W * DPR); cv.height = Math.round(HC * DPR);
+}
+new ResizeObserver(resize).observe(cv);
+function readTheme() {
+  const cs = getComputedStyle(document.documentElement);
+  for (const k of ['stage', 'surface', 'ink', 'muted', 'line', 'accent', 'good', 'v0', 'v1', 'v2']) C[k] = cs.getPropertyValue('--' + k).trim();
+  C.rgb = ['v0', 'v1', 'v2'].map(k => [1, 3, 5].map(i => parseInt(C[k].slice(i, i + 2), 16)));
+}
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change', readTheme);
+function vColor(f, a = 1) {
+  f = Math.max(0, Math.min(1, f));
+  const [A, B] = f < 0.5 ? [C.rgb[0], C.rgb[1]] : [C.rgb[1], C.rgb[2]], u = f < 0.5 ? f * 2 : f * 2 - 1;
+  return `rgba(${A.map((x, i) => Math.round(x + (B[i] - x) * u)).join(',')},${a})`;
+}
+const frac = v => (v - R.lo) / Math.max(1, R.hi - R.lo);
+
+let tokens = [], parts = [], floats = [], visCarry = 0, lastF = performance.now();
+function geo() {
+  const pad = 16, beltY = Math.round(HC * 0.19), xSrc = pad + 28, xEnd = W - pad - 16, K = S.slots.length;
+  const xs = [];
+  for (let j = 0; j < K; j++) xs.push(xSrc + (j + 1) * (xEnd - 30 - xSrc) / (K + 1));
+  const hTop = HC * 0.42, base = HC - 24;
+  return { pad, beltY, xSrc, xEnd, xs, hTop, base, plotH: base - hTop - 6, bw: (W - 2 * pad) / HG.B, speed: (xEnd - xSrc) / 2.8 };
+}
+function spawn(tr) {
+  const river = Math.min(rate() * SPEED, 40) > 12;
+  const g = geo();
+  tokens.push({ x: g.xSrc, y: g.beltY + (river ? (Math.random() - 0.5) * 16 : 0), j: 0, val: tr.vals[0], tr, phase: 'belt', anim: null, r: river ? 4.5 : 11, river });
+  if (tokens.length > 160) tokens.shift();
+}
+function burst(x, y, col, n = 10) {
+  for (let i = 0; i < n && parts.length < 500; i++) {
+    const a = Math.random() * Math.PI * 2, s = 30 + Math.random() * 90;
+    parts.push({ x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s - 20, life: 0.6 + Math.random() * 0.4, col });
+  }
+}
+function floatText(x, y, text) { if (floats.length < 40) floats.push({ x, y, text, life: 1 }); }
+function endAnim(tk) { if (tk.anim) { tk.val = tk.tr.vals[tk.anim.j + 1]; tk.anim = null; } }
+function trigger(tk, j) {
+  endAnim(tk);
+  const e = tk.tr.ev[j];
+  if (e.k === 'reroll') { tk.anim = { k: 'reroll', j, u: 0, dur: 0.45, ...e }; if (!tk.river) floatText(tk.x, tk.y - 20, '↻'); }
+  else if (e.k === 'max' || e.k === 'sum') tk.anim = { k: e.k, j, u: 0, dur: 0.5, done: false, ...e };
+  else tk.val = tk.tr.vals[j + 1];
+}
+function update(dt, g) {
+  for (const tk of tokens) {
+    if (tk.phase === 'belt') {
+      const a = tk.anim;
+      if (a) {
+        a.u += dt / a.dur;
+        if (a.k === 'reroll') tk.val = a.u < 0.5 ? a.a : a.b;
+        if ((a.k === 'max' || a.k === 'sum') && a.u >= 0.6 && !a.done) {
+          a.done = true;
+          if (a.k === 'max') { const lo = Math.min(a.a, a.b); burst(tk.x, tk.y, vColor(frac(lo), 0.9), tk.river ? 3 : 10); tk.val = Math.max(a.a, a.b); }
+          else { tk.val = a.a + a.b; if (!tk.river) floatText(tk.x, tk.y + 22, '+' + a.b); }
+        }
+        if (a.u >= 1) endAnim(tk);
+      }
+      tk.x += g.speed * dt * (tk.anim && !tk.river ? 0.3 : 1);
+      while (tk.j < g.xs.length && tk.x >= g.xs[tk.j]) trigger(tk, tk.j++);
+      if (tk.x >= g.xEnd) {
+        endAnim(tk);
+        tk.val = tk.tr.v; tk.phase = 'drop'; tk.u = 0; tk.x0 = tk.x; tk.y0 = tk.y;
+        tk.b = bucketOf(tk.val);
+      }
+    } else {
+      tk.u += dt / 0.75;
+      const bx = g.pad + (tk.b + 0.5) * g.bw, by = g.base - (Math.max(0, HG.h[tk.b]) / HG.scale) * g.plotH - tk.r;
+      const u = Math.min(1, tk.u), cx = (tk.x0 + bx) / 2, cy = Math.min(tk.y0, by) - 50;
+      tk.x = (1 - u) ** 2 * tk.x0 + 2 * (1 - u) * u * cx + u * u * bx;
+      tk.y = (1 - u) ** 2 * tk.y0 + 2 * (1 - u) * u * cy + u * u * by;
+      if (tk.u >= 1) {
+        tk.dead = true;
+        HG.hv[tk.b] += HG.scale * (tk.river ? 0.25 : 0.9);
+        note(frac(tk.val));
+        if (tk.val === R.hi) burst(tk.x, tk.y, C.accent, tk.river ? 2 : 6);
+      }
+    }
+  }
+  tokens = tokens.filter(t => !t.dead);
+  for (const p of parts) { p.x += p.vx * dt; p.y += p.vy * dt; p.vy += 160 * dt; p.life -= dt; }
+  parts = parts.filter(p => p.life > 0);
+  for (const f of floats) { f.y -= 24 * dt; f.life -= dt * 1.2; }
+  floats = floats.filter(f => f.life > 0);
+  // Springy bars chase the empirical frequencies.
+  let mx = Math.max(...HG.th) * (S.research.curve ? 1 : 0);
+  for (let b = 0; b < HG.B; b++) {
+    const target = HG.n ? HG.cnt[b] / HG.n : 0;
+    mx = Math.max(mx, target);
+    HG.hv[b] += (target - HG.h[b]) * 70 * dt;
+    HG.hv[b] *= Math.exp(-9 * dt);
+    HG.h[b] += HG.hv[b] * dt;
+  }
+  HG.scale += ((mx || 1 / HG.B) * 1.2 - HG.scale) * Math.min(1, dt * 2.5);
+  if (HG.flash > 0) HG.flash -= dt;
+}
+function rrect(x, y, w, h, r) { ctx.beginPath(); ctx.roundRect ? ctx.roundRect(x, y, w, h, r) : ctx.rect(x, y, w, h); }
+function drawToken(x, y, r, v, alpha = 1) {
+  ctx.fillStyle = vColor(frac(v), alpha);
+  ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+  if (r > 6) {
+    ctx.fillStyle = `rgba(255,255,255,${alpha})`;
+    ctx.font = `600 ${v >= 100 ? 9 : 11}px "IBM Plex Mono", monospace`;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(v, x, y + 0.5);
+  }
+}
+function draw(t, g) {
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  ctx.clearRect(0, 0, W, HC);
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  // Belt with moving dashes.
+  ctx.strokeStyle = C.line; ctx.lineWidth = 2;
+  ctx.setLineDash([6, 8]); ctx.lineDashOffset = -(t * g.speed) % 14 * (rate() > 0 ? 1 : 0);
+  ctx.beginPath(); ctx.moveTo(g.xSrc, g.beltY); ctx.lineTo(g.xEnd, g.beltY); ctx.stroke();
+  ctx.setLineDash([]);
+  // Tokens and ghosts.
+  for (const tk of tokens) {
+    let y = tk.y;
+    const a = tk.anim;
+    if (a && a.k === 'reroll') y -= Math.sin(Math.PI * Math.min(1, a.u)) * (tk.river ? 8 : 28);
+    if (a && (a.k === 'max' || a.k === 'sum') && !a.done) {
+      const u = Math.min(1, a.u / 0.6), e = u * u, off = (a.k === 'max' ? -1 : 1) * 40 * (1 - e);
+      drawToken(tk.x, tk.y + off, tk.r, a.b, 0.85);
+    }
+    drawToken(tk.x, y, tk.r, tk.val);
+  }
+  // Source and machines sit over the belt; tokens show through while inside.
+  ctx.globalAlpha = 0.82;
+  ctx.fillStyle = C.surface; ctx.strokeStyle = C.ink; ctx.lineWidth = 1.2;
+  rrect(g.xSrc - 24, g.beltY - 20, 48, 40, 7); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = C.ink; ctx.font = '600 13px "IBM Plex Mono", monospace';
+  ctx.fillText('d' + PF.DICE[S.die], g.xSrc, g.beltY + 0.5);
+  // Machines.
+  S.slots.forEach((s, j) => {
+    const x = g.xs[j];
+    ctx.fillStyle = C.surface; ctx.strokeStyle = s.m ? C.muted : C.line;
+    if (!s.m) ctx.setLineDash([3, 3]);
+    rrect(x - 27, g.beltY - 19, 54, 38, 7); ctx.fill(); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = s.m ? C.ink : C.muted; ctx.font = '500 12px "IBM Plex Mono", monospace';
+    ctx.fillText(s.m === 'reroll' ? '↻<' + s.t : s.m === 'max' ? 'max' : s.m === 'sum' ? 'Σ₂' : '·', x, g.beltY + 0.5);
+  });
+  ctx.globalAlpha = 1;
+  for (const p of parts) { ctx.globalAlpha = Math.max(0, p.life); ctx.fillStyle = p.col; ctx.fillRect(p.x - 1.5, p.y - 1.5, 3, 3); }
+  ctx.globalAlpha = 1;
+  ctx.font = '500 13px "IBM Plex Mono", monospace';
+  for (const f of floats) { ctx.globalAlpha = Math.max(0, f.life); ctx.fillStyle = C.muted; ctx.fillText(f.text, f.x, f.y); }
+  ctx.globalAlpha = 1;
+
+  // Histogram.
+  const { pad, base, plotH, bw } = g;
+  const yOf = p => base - (p / HG.scale) * plotH;
+  for (let b = 0; b < HG.B; b++) {
+    const h = Math.max(0, HG.h[b]) / HG.scale * plotH;
+    if (h < 0.3) continue;
+    ctx.fillStyle = vColor((b + 0.5) / HG.B, 0.85);
+    ctx.fillRect(pad + b * bw + bw * 0.12, base - h, Math.max(1, bw * 0.76), h);
+  }
+  ctx.strokeStyle = C.line; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(pad, base + 0.5); ctx.lineTo(W - pad, base + 0.5); ctx.stroke();
+  if (S.research.curve) {
+    const glow = Math.max(0, HG.flash);
+    ctx.strokeStyle = C.accent; ctx.lineWidth = 1.5 + glow * 2; ctx.globalAlpha = 0.9;
+    ctx.beginPath();
+    for (let b = 0; b < HG.B; b++) { const x = pad + (b + 0.5) * bw, y = yOf(HG.th[b]); b ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }
+    ctx.stroke();
+    ctx.fillStyle = C.accent;
+    if (HG.B <= 24) for (let b = 0; b < HG.B; b++) { ctx.beginPath(); ctx.arc(pad + (b + 0.5) * bw, yOf(HG.th[b]), 2.2, 0, Math.PI * 2); ctx.fill(); }
+    ctx.globalAlpha = 1;
+  }
+  if (HG.flash > 0) {
+    ctx.globalAlpha = Math.min(1, HG.flash); ctx.fillStyle = C.good; ctx.font = '600 13px "IBM Plex Mono", monospace';
+    ctx.textAlign = 'right'; ctx.fillText('сошлось', W - pad, g.hTop - 6); ctx.textAlign = 'center'; ctx.globalAlpha = 1;
+  }
+  const xOfV = v => pad + ((v - R.lo + 0.5) / HG.w) * bw;
+  if (S.research.numbers) {
+    const x = xOfV(R.E);
+    ctx.fillStyle = C.accent;
+    ctx.beginPath(); ctx.moveTo(x, base + 2); ctx.lineTo(x - 5, base + 9); ctx.lineTo(x + 5, base + 9); ctx.fill();
+  }
+  if (HG.n > 0) {
+    const x = xOfV(empMean());
+    ctx.strokeStyle = C.ink; ctx.globalAlpha = 0.55; ctx.setLineDash([3, 4]); ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(x, g.hTop); ctx.lineTo(x, base); ctx.stroke(); ctx.setLineDash([]); ctx.globalAlpha = 1;
+    ctx.fillStyle = C.ink; ctx.font = '500 11px "IBM Plex Mono", monospace'; ctx.fillText('x̄', x + 8, g.hTop + 6);
+  }
+  ctx.fillStyle = C.muted; ctx.font = '400 10.5px "IBM Plex Mono", monospace';
+  const every = Math.max(1, Math.ceil(HG.B / Math.max(1, W / 34)));
+  for (let b = 0; b < HG.B; b += every) ctx.fillText(R.lo + Math.round(b * HG.w), pad + (b + 0.5) * bw, base + 15);
+  ctx.textAlign = 'left';
+  ctx.fillText(`N = ${fmt(HG.n)}`, pad, g.hTop - 6);
+}
+function frame(now) {
+  const dt = Math.min(0.05, (now - lastF) / 1000);
+  lastF = now;
+  if (W > 0) {
+    visCarry += Math.min(rate() * SPEED, 40) * dt;
+    while (visCarry >= 1) { visCarry -= 1; spawn(trace()); }
+    const g = geo();
+    update(dt, g);
+    draw(now / 1000, g);
+  }
+  requestAnimationFrame(frame);
+}
+
+// ---------- boot ----------
+readTheme();
+recompute();
+renderAll();
+if (S.research.offline && S.last) {
+  const dt = Math.min(8 * 3600, (Date.now() - S.last) / 1000);
+  const n = Math.floor(dt * rate());
+  if (n > 0) {
+    const got = credit(n, n * R.E);
+    log(`Пока вас не было (${fmtTime(dt)}): +${fmt(got)} Ожидания.`, 'good');
+  }
+}
+if (!S.allRolls) log('Нажмите «Бросить»: каждый исход приносит столько Ожидания, сколько выпало.');
+resize();
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

@@ -31,3 +31,9 @@ These are optional and deterministic, and they are included in every export.
 ## Drawing
 
 On screen the sigil is drawn as a pen would draw it. The frame comes first. Then the pen sets down at the start ring and travels the line, and the parallel strokes appear as it passes. Each ornament grows out of the line and is drawn stroke by stroke. Ornaments are pure line work, with hatching where a shape would otherwise be filled. **Draw again** replays the drawing. Exports are always the finished image.
+
+## Фабрика вероятностей (прототип)
+
+`factory/index.html` is a separate prototype: an incremental game about automating chance. Open it in a browser; it needs no build either.
+
+You build a recipe from machines (reroller, max of two, summator) on top of a die. Income is the expected value of the output times the roll rate. Distributions are computed exactly; outcomes are really random, and the histogram on screen converges to the theoretical curve. Precision contracts pay for a low σ/E, and prestige resets the factory for bits earned by the entropy it produced. Add `?speed=50` to the URL to speed up time for testing.
