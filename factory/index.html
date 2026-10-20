@@ -39,6 +39,7 @@
 }
 
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 body {
   margin: 0;
   background: var(--paper);
@@ -140,6 +141,7 @@ footer .btns { display: flex; gap: 8px; }
       <div class="kpi"><span class="k">всего бросков</span><b id="kAll">0</b></div>
       <div class="kpi" id="kpP" hidden><span class="k">Точность</span><b id="kP">0</b></div>
       <div class="kpi" id="kpB" hidden><span class="k">биты</span><b id="kB">0</b></div>
+      <div class="kpi" id="kpA" hidden><span class="k">асимптотика</span><b id="kA">0</b></div>
     </div>
   </header>
 
@@ -152,6 +154,7 @@ footer .btns { display: flex; gap: 8px; }
     <section class="panel stagep" aria-label="Наблюдение">
       <canvas id="cv" aria-label="Лента с исходами и гистограмма выхода"></canvas>
       <div class="stats" id="stats"></div>
+      <div class="stats" id="stageCtl"></div>
       <ul class="log" id="log"></ul>
     </section>
 
@@ -170,6 +173,7 @@ footer .btns { display: flex; gap: 8px; }
         <button data-act="tab" data-tab="research">Исследования</button>
         <button data-act="tab" data-tab="prestige">Престиж</button>
         <button data-act="tab" data-tab="bets" hidden>Ставки</button>
+        <button data-act="tab" data-tab="asym" hidden>Асимптотика</button>
       </nav>
       <div id="tabBody"></div>
     </section>
@@ -263,7 +267,24 @@ const PF = (() => {
     res: { name: 'Резонанс', effect: '×1,5 к броскам/с', cost: n => 25 * 4 ** n },
   };
   const H_UNIT = 1.5e5;
-  const bitsFor = sumH => Math.floor(Math.sqrt(sumH / H_UNIT));
+  // Each Asymptote point multiplies bits by 1.5×, 2×, 2.5×, …
+  const bitsFor = (sumH, alpha = 0) => Math.floor(Math.sqrt(sumH / H_UNIT) * (1 + 0.5 * alpha) + 1e-9);
+  const sumHFor = (bits, alpha = 0) => H_UNIT * (bits / (1 + 0.5 * alpha)) ** 2;
+
+  // Asymptote (second prestige): one point at 10^7 outputs since the last one, then one per order of magnitude.
+  const ASYM_FROM = 7, AGE_TAU = 120;
+  const asymGain = rolls => Math.max(0, Math.floor(Math.log10(Math.max(1, rolls)) + 1e-9) - (ASYM_FROM - 1));
+  // "Aging": the longer a recipe runs unchanged, the closer it is to its asymptote, up to +25% per point.
+  const ageMult = (alpha, age) => 1 + 0.25 * alpha * (1 - Math.exp(-age / AGE_TAU));
+
+  // Galton board: a bounce path through `rows` peg rows that ends in bucket b of B. The rights are spread over
+  // the rows by a random permutation, so every path into that bucket is equally likely.
+  function galtonPath(b, B, rows, rnd = Math.random) {
+    const k = B > 1 ? Math.round(b * rows / (B - 1)) : 0;
+    const steps = Array.from({ length: rows }, (_, i) => (i < k ? 1 : -1));
+    for (let i = rows - 1; i > 0; i--) { const j = Math.floor(rnd() * (i + 1)); [steps[i], steps[j]] = [steps[j], steps[i]]; }
+    return steps;
+  }
   const RESEARCH = [
     { id: 'curve', cost: 1, name: 'Теоретическая кривая', desc: 'поверх гистограммы появляется точное распределение' },
     { id: 'max', cost: 1, name: 'Максимум из двух', desc: 'машина: больший из двух исходов' },
@@ -276,6 +297,7 @@ const PF = (() => {
     { id: 'presets', cost: 4, name: 'Пресеты рецептов', desc: 'два слота, чтобы сохранять и мгновенно менять рецепт' },
     { id: 'bets', cost: 3, name: 'Стол ставок', desc: 'ставки на среднее следующих исходов против букмекера' },
     { id: 'kelly', cost: 4, need: 'bets', name: 'Критерий Келли', desc: 'оптимальная доля ставки и автоставки' },
+    { id: 'galton', cost: 2, need: 'sum', name: 'Доска Гальтона', desc: 'исходы падают в гистограмму через штырьки — колокол на глазах' },
   ];
 
   // Betting: the bookmaker's estimate trails the true E with a time lag; each posted line adds the noise of
@@ -295,6 +317,7 @@ const PF = (() => {
     die, hi, reroll, maxOf, sumOf, mean, sd, entropy, cdf, sample, optimalT, apply, stages,
     DICE, DIE_COST, rollerCost, rollerRate, slotCost, MAX_SLOTS, MAX_SUMS, CONTRACTS, PUP, H_UNIT, bitsFor, RESEARCH,
     BET_ODDS, BOOK_TAU, BOOK_N, BET_COOLDOWN, BET_LIMIT_S, BET_MS, Phi, pOver, kelly,
+    sumHFor, ASYM_FROM, AGE_TAU, asymGain, ageMult, galtonPath,
   };
 })();
 if (typeof module !== 'undefined') module.exports = PF;
@@ -318,6 +341,7 @@ const fresh = () => ({
   rollers: 0, slots: [], die: 0, cal: 0, res: 0, contract: -1,
   research: {}, presets: [null, null], hints: {},
   runRolls: 0, allRolls: 0, prestiges: 0, sound: false, last: Date.now(),
+  alpha: 0, asymRolls: 0, recipeAge: 0, asyms: 0, galton: true,
   bet: null, bookE: null, line: null, lineAt: 0, betM: 100, betFrac: 0.1, autoKelly: false, betStats: { n: 0, w: 0, net: 0 },
 });
 function load() {
@@ -344,12 +368,14 @@ function fmt(x, d) {
   return (x / 10 ** ex).toLocaleString('ru-RU', { maximumFractionDigits: 2 }) + '·10' + String(ex).replace(/./g, c => SUP[c]);
 }
 const plural = (n, one, few, many) => (n % 10 === 1 && n % 100 !== 11 ? one : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 10 || n % 100 >= 20) ? few : many);
+const sup = n => String(n).replace(/./g, c => SUP[c]);
 const pct = x => (x * 100).toLocaleString('ru-RU', { maximumFractionDigits: 1 }) + '%';
 const clock = () => new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
 // ---------- recipe ----------
 let R, HG;
 function recompute(keepBet = false) {
+  if (!keepBet) S.recipeAge = 0;
   if (S.bet && !keepBet) {
     S.e += S.bet.stake;
     log('Ставка аннулирована: рецепт изменился. Ставка возвращена.');
@@ -414,7 +440,7 @@ function trace() {
 
 // ---------- economy ----------
 const rate = () => PF.rollerRate(S.rollers) * 1.5 ** S.res;
-const mult = () => (1 + 0.1 * S.bitsTotal) * 1.25 ** S.cal * (S.contract >= 0 ? 0.5 : 1);
+const mult = () => (1 + 0.1 * S.bitsTotal) * 1.25 ** S.cal * (S.contract >= 0 ? 0.5 : 1) * PF.ageMult(S.alpha, S.recipeAge);
 function gauss() { let u = 0; while (!u) u = Math.random(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * Math.random()); }
 
 function observe(v) {
@@ -437,6 +463,7 @@ function credit(n, total) {
   S.e += total * m;
   S.sumH += n * R.H;
   S.runRolls += n;
+  S.asymRolls += n;
   const before = S.allRolls;
   S.allRolls += n;
   const k0 = Math.floor(Math.log10(Math.max(1, before))), k1 = Math.floor(Math.log10(S.allRolls));
@@ -503,6 +530,7 @@ function step(dt) {
   const n = Math.floor(carry); carry -= n;
   const got = produce(n);
   factEma = factEma * 0.92 + (got / dt) * 0.08;
+  S.recipeAge += dt;
   // The bookmaker's estimate drifts toward the true E with a lag.
   S.bookE += (R.E - S.bookE) * (1 - Math.exp(-dt / PF.BOOK_TAU));
   if (!S.bet) {
@@ -601,16 +629,27 @@ const ACT = {
     renderAll();
   },
   prestige(b) {
-    const g = PF.bitsFor(S.sumH);
+    const g = PF.bitsFor(S.sumH, S.alpha);
     if (g < 1) return;
     if (!b.dataset.armed) { arm(b, 'Точно? Нажмите ещё раз'); return; }
     S.bits += g; S.bitsTotal += g; S.prestiges++;
-    Object.assign(S, { e: 0, p: 0, sumH: 0, rollers: 0, slots: [], die: 0, cal: 0, res: 0, contract: -1, runRolls: 0, bet: null, bookE: null, line: null, lineAt: 0 });
-    carry = 0;
+    resetRun();
     log(`Сброс №${S.prestiges}: +${g} бит. Всего бит: ${S.bitsTotal}, Ожидание ×${fmt(1 + 0.1 * S.bitsTotal)}.`, 'good');
     UI.tab = 'research';
     recompute(); renderAll(); save();
   },
+  asym(b) {
+    const g = PF.asymGain(S.asymRolls);
+    if (g < 1) return;
+    if (!b.dataset.armed) { arm(b, 'Точно? Биты обнулятся'); return; }
+    S.alpha += g; S.asyms++;
+    resetRun();
+    Object.assign(S, { bits: 0, bitsTotal: 0, asymRolls: 0 });
+    log(`Асимптотика №${S.asyms}: +${g} α. Всего α: ${S.alpha} — выдержка до ×${fmt(PF.ageMult(S.alpha, Infinity))}, биты ×${fmt(1 + 0.5 * S.alpha)}.`, 'good');
+    UI.tab = 'asym';
+    recompute(); renderAll(); save();
+  },
+  galton() { S.galton = !S.galton; tokens = []; renderStageCtl(); },
   tab(b) { UI.tab = b.dataset.tab; renderTab(); },
   sound() {
     S.sound = !S.sound;
@@ -642,6 +681,10 @@ const ACT = {
     recompute(); renderRecipe();
   },
 };
+function resetRun() {
+  Object.assign(S, { e: 0, p: 0, sumH: 0, rollers: 0, slots: [], die: 0, cal: 0, res: 0, contract: -1, runRolls: 0, bet: null, bookE: null, line: null, lineAt: 0 });
+  carry = 0;
+}
 function arm(b, text) {
   b.dataset.armed = '1';
   const old = b.innerHTML;
@@ -719,10 +762,11 @@ function updateMinis() {
 }
 
 function renderTab() {
-  if (UI.tab === 'bets' && !S.research.bets) UI.tab = 'contracts';
+  if ((UI.tab === 'bets' && !S.research.bets) || (UI.tab === 'asym' && !(S.prestiges > 0 || S.alpha > 0))) UI.tab = 'contracts';
   document.querySelectorAll('#tabs button').forEach(b => {
     b.classList.toggle('cur', b.dataset.tab === UI.tab);
     if (b.dataset.tab === 'bets') b.hidden = !S.research.bets;
+    if (b.dataset.tab === 'asym') b.hidden = !(S.prestiges > 0 || S.alpha > 0);
   });
   const body = $('#tabBody');
   if (UI.tab === 'contracts') {
@@ -762,8 +806,16 @@ function renderTab() {
           <button data-act="autokelly" class="${S.autoKelly ? 'on' : ''}">Авто-Келли: ${S.autoKelly ? 'вкл' : 'выкл'}</button></div></div>` : ''}
       <div id="bLive" style="margin-top:12px"></div>
       <div class="sub" id="bStats" style="margin-top:8px"></div>`;
+  } else if (UI.tab === 'asym') {
+    body.innerHTML = `<p class="sub">Асимптотика — второй сброс: вдобавок к фабрике обнуляет биты (исследования остаются). Очки α даёт масштаб: первое — за 10${sup(PF.ASYM_FROM)} исходов с прошлой Асимптотики, потом по одному за каждый следующий порядок.</p>
+      <p class="sub">Каждое α навсегда даёт <b>выдержку</b>: пока рецепт не меняется, множитель Ожидания растёт до +25% за α (половина пути — за ${fmtTime(PF.AGE_TAU * Math.LN2)}), и умножает биты за сброс на +50% за α. Любое изменение рецепта обнуляет выдержку.</p>
+      <div class="item"><div>Исходов с прошлой Асимптотики</div><b class="num" id="aRolls"></b></div>
+      <div class="stack"><span class="sub">До следующего α: <span class="num" id="aNext"></span></span><div class="bar"><i id="aBar"></i></div></div>
+      <div class="item"><div>Выдержка рецепта<div class="sub">сейчас / предел при ваших α</div></div><b class="num" id="aAge"></b></div>
+      <div class="item"><div>α при сбросе</div><b class="num" id="aGain"></b></div>
+      <button class="primary" data-act="asym" id="aBtn" style="width:100%;margin-top:6px">Асимптотика</button>`;
   } else {
-    body.innerHTML = `<p class="sub">Сброс обнуляет Ожидание, броскомёты, слоты, грани и Точность. Взамен — биты: мера случайности, которую произвела фабрика. Машины, которые сжимают разброс, поднимают Ожидание, но производят меньше битов.</p>
+    body.innerHTML = `<p class="sub">Сброс обнуляет Ожидание, броскомёты, слоты, грани и Точность. Взамен — биты: мера случайности, которую произвела фабрика. Машины, которые сжимают разброс, поднимают Ожидание, но производят меньше битов.${S.alpha ? ` Ваши α умножают биты на ×${fmt(1 + 0.5 * S.alpha)}.` : ''}</p>
       <div class="item"><div>Произведено энтропии<div class="sub">бит × исходов в этом забеге</div></div><b class="num" id="pSumH"></b></div>
       ${S.research.entropy ? `<div class="item"><div>Энтропия выхода<div class="sub">бит на исход сейчас</div></div><b class="num" id="pH"></b></div>
         <div class="stack"><span class="sub">До следующего бита: <span class="num" id="pNext"></span></span><div class="bar"><i id="pBar"></i></div></div>` : ''}
@@ -773,7 +825,11 @@ function renderTab() {
   refresh();
 }
 function renderFooter() { $('#soundBtn').textContent = 'Звук: ' + (S.sound ? 'вкл' : 'выкл'); $('#soundBtn').classList.toggle('on', S.sound); }
-function renderAll() { renderRecipe(); renderTab(); renderFooter(); refresh(); }
+function renderStageCtl() {
+  $('#stageCtl').innerHTML = S.research.galton
+    ? `<button data-act="galton" class="${S.galton ? 'on' : ''}">Доска Гальтона: ${S.galton ? 'вкл' : 'выкл'}</button>` : '';
+}
+function renderAll() { renderRecipe(); renderTab(); renderFooter(); renderStageCtl(); refresh(); }
 
 const empMean = () => HG.sx / HG.n;
 const empSd = () => Math.sqrt(Math.max(0, HG.sxx / HG.n - empMean() ** 2));
@@ -786,8 +842,10 @@ function refresh() {
   $('#kAll').textContent = fmt(S.allRolls);
   $('#kpP').hidden = !(S.p > 0 || S.contract >= 0 || S.cal || S.res);
   $('#kP').textContent = fmt(S.p);
-  $('#kpB').hidden = !(S.bitsTotal > 0 || PF.bitsFor(S.sumH) > 0);
+  $('#kpB').hidden = !(S.bitsTotal > 0 || PF.bitsFor(S.sumH, S.alpha) > 0);
   $('#kB').textContent = `${S.bits} / ${S.bitsTotal}`;
+  $('#kpA').hidden = !S.alpha;
+  $('#kA').textContent = S.alpha + ' α';
   $('#rCount').textContent = S.rollers;
   $('#rCost').textContent = fmt(PF.rollerCost(S.rollers));
   $('#rNext').textContent = (Math.floor(S.rollers / 25) + 1) * 25;
@@ -796,12 +854,12 @@ function refresh() {
     const cur = b.dataset.cur === 'p' ? S.p : b.dataset.cur === 'bits' ? S.bits : S.e;
     b.disabled = cur < +b.dataset.cost;
   });
-  const gain = PF.bitsFor(S.sumH);
+  const gain = PF.bitsFor(S.sumH, S.alpha);
   const set = (id, t) => { const el = $(id); if (el) el.textContent = t; };
   set('#pSumH', fmt(S.sumH));
   set('#pH', fmt(R.H, 3));
   set('#pGain', gain);
-  const nextH = (gain + 1) ** 2 * PF.H_UNIT, curH = gain ** 2 * PF.H_UNIT;
+  const nextH = PF.sumHFor(gain + 1, S.alpha), curH = PF.sumHFor(gain, S.alpha);
   set('#pNext', r > 0 ? `${fmt(nextH - S.sumH)} (≈ ${fmtTime((nextH - S.sumH) / (r * R.H))})` : fmt(nextH - S.sumH));
   const bar = $('#pBar'); if (bar) bar.style.width = pct(Math.min(1, (S.sumH - curH) / (nextH - curH))).replace(',', '.');
   const pb = $('#pBtn');
@@ -811,8 +869,22 @@ function refresh() {
   const th = S.research.numbers
     ? `Теория: <b>E ${fmt(R.E, 3)}</b> · <b>σ ${fmt(R.sd, 3)}</b> · КПД <b>${pct(R.eff)}</b>${S.research.entropy ? ` · H <b>${fmt(R.H, 3)}</b> бит` : ''}`
     : '<span class="muted">Теория: неизвестна (исследование «Числа рецепта»)</span>';
-  $('#stats').innerHTML = `<span>${emp}</span><span>${th}</span>`;
+  const age = S.alpha ? `<span>Выдержка рецепта: <b>${fmtTime(S.recipeAge)}</b> → ×<b>${fmt(PF.ageMult(S.alpha, S.recipeAge), 3)}</b></span>` : '';
+  $('#stats').innerHTML = `<span>${emp}</span><span>${th}</span>${age}`;
   if (UI.tab === 'bets') refreshBets();
+  if (UI.tab === 'asym') refreshAsym();
+}
+function refreshAsym() {
+  const set = (id, t) => { const el = $(id); if (el) el.textContent = t; };
+  const g = PF.asymGain(S.asymRolls), nextAt = 10 ** (PF.ASYM_FROM + g), lg = Math.log10(Math.max(1, S.asymRolls));
+  set('#aRolls', fmt(S.asymRolls));
+  set('#aNext', `${fmt(Math.max(0, nextAt - S.asymRolls))} исходов (рубеж 10${sup(PF.ASYM_FROM + g)}${rate() > 0 ? `, ≈ ${fmtTime((nextAt - S.asymRolls) / rate())}` : ''})`);
+  const bar = $('#aBar');
+  if (bar) bar.style.width = (100 * Math.min(1, Math.max(0, g ? lg - (PF.ASYM_FROM + g - 1) : lg / PF.ASYM_FROM))).toFixed(1) + '%';
+  set('#aAge', S.alpha ? `${fmtTime(S.recipeAge)} · ×${fmt(PF.ageMult(S.alpha, S.recipeAge), 3)} / ×${fmt(PF.ageMult(S.alpha, Infinity))}` : 'нет α');
+  set('#aGain', g);
+  const ab = $('#aBtn');
+  if (ab && !ab.dataset.armed) { ab.disabled = g < 1; ab.textContent = g < 1 ? `Нужно 10${sup(PF.ASYM_FROM)} исходов` : `Асимптотика: +${g} α`; }
 }
 function refreshBets() {
   const set = (id, t) => { const el = $(id); if (el) el.innerHTML = t; };
@@ -901,12 +973,32 @@ function vColor(f, a = 1) {
 const frac = v => (v - R.lo) / Math.max(1, R.hi - R.lo);
 
 let tokens = [], parts = [], floats = [], visCarry = 0, lastF = performance.now();
+const galtonOn = () => S.research.galton && S.galton && HG.B >= 3;
 function geo() {
-  const pad = 16, beltY = Math.round(HC * 0.19), xSrc = pad + 28, xEnd = W - pad - 16, K = S.slots.length;
+  const gal = galtonOn();
+  const pad = 16, beltY = Math.round(HC * (gal ? 0.11 : 0.19)), xSrc = pad + 28, xEnd = W - pad - 16, K = S.slots.length;
   const xs = [];
   for (let j = 0; j < K; j++) xs.push(xSrc + (j + 1) * (xEnd - 30 - xSrc) / (K + 1));
-  const hTop = HC * 0.42, base = HC - 24;
-  return { pad, beltY, xSrc, xEnd, xs, hTop, base, plotH: base - hTop - 6, bw: (W - 2 * pad) / HG.B, speed: (xEnd - xSrc) / 2.8 };
+  const hTop = HC * (gal ? 0.54 : 0.42), base = HC - 24, bw = (W - 2 * pad) / HG.B;
+  const g = { pad, beltY, xSrc, xEnd, xs, hTop, base, plotH: base - hTop - 6, bw, speed: (xEnd - xSrc) / 2.8, gal };
+  if (gal) {
+    // Peg triangle: apex under the belt, last row as wide as the histogram's bucket centres.
+    g.rows = Math.min(HG.B - 1, 14);
+    g.apex = pad + HG.B / 2 * bw;
+    g.apexY = beltY + 34;
+    g.rowH = (hTop - 22 - g.apexY) / g.rows;
+    g.dx = (HG.B - 1) * bw / g.rows;
+    g.pegX = (i, Rt) => g.apex + (Rt - i / 2) * g.dx;
+    g.pegY = i => g.apexY + i * g.rowH;
+  }
+  return g;
+}
+let pegFlash = new Map();
+function land(tk) {
+  tk.dead = true;
+  HG.hv[tk.b] += HG.scale * (tk.river ? 0.25 : 0.9);
+  note(frac(tk.val));
+  if (tk.val === R.hi) burst(tk.x, tk.y, C.accent, tk.river ? 2 : 6);
 }
 function spawn(tr) {
   const river = Math.min(rate() * SPEED, 40) > 12;
@@ -951,19 +1043,47 @@ function update(dt, g) {
         tk.b = bucketOf(tk.val);
       }
     } else {
-      tk.u += dt / 0.75;
       const bx = g.pad + (tk.b + 0.5) * g.bw, by = g.base - (Math.max(0, HG.h[tk.b]) / HG.scale) * g.plotH - tk.r;
-      const u = Math.min(1, tk.u), cx = (tk.x0 + bx) / 2, cy = Math.min(tk.y0, by) - 50;
-      tk.x = (1 - u) ** 2 * tk.x0 + 2 * (1 - u) * u * cx + u * u * bx;
-      tk.y = (1 - u) ** 2 * tk.y0 + 2 * (1 - u) * u * cy + u * u * by;
-      if (tk.u >= 1) {
-        tk.dead = true;
-        HG.hv[tk.b] += HG.scale * (tk.river ? 0.25 : 0.9);
-        note(frac(tk.val));
-        if (tk.val === R.hi) burst(tk.x, tk.y, C.accent, tk.river ? 2 : 6);
+      if (tk.phase === 'drop') {
+        // Arc from the belt end to the bar top, or to the apex of the Galton board.
+        tk.u += dt / (g.gal ? 0.45 : 0.75);
+        const tx = g.gal ? g.apex : bx, ty = g.gal ? g.apexY - tk.r - 2 : by;
+        const u = Math.min(1, tk.u), cx = (tk.x0 + tx) / 2, cy = Math.min(tk.y0, ty) - (g.gal ? 24 : 50);
+        tk.x = (1 - u) ** 2 * tk.x0 + 2 * (1 - u) * u * cx + u * u * tx;
+        tk.y = (1 - u) ** 2 * tk.y0 + 2 * (1 - u) * u * cy + u * u * ty;
+        if (tk.u >= 1) {
+          if (g.gal) { tk.phase = 'peg'; tk.i = 0; tk.Rt = 0; tk.u = 0; tk.path = PF.galtonPath(tk.b, HG.B, g.rows); pegFlash.set('0,0', 1); }
+          else land(tk);
+        }
+      } else if (tk.phase === 'peg') {
+        if (!g.gal) { tk.phase = 'fall'; tk.u = 0; tk.x0 = tk.x; tk.y0 = tk.y; continue; }
+        tk.u += dt / (tk.river ? 0.05 : 0.075);
+        while (tk.u >= 1 && tk.i < g.rows) {
+          tk.u -= 1;
+          if (tk.path[tk.i] > 0) tk.Rt++;
+          tk.i++;
+          if (tk.i < g.rows) pegFlash.set(tk.i + ',' + tk.Rt, 1);
+        }
+        const lift = tk.r + 2;
+        if (tk.i >= g.rows) {
+          tk.x = g.pegX(g.rows, tk.Rt); tk.y = g.pegY(g.rows) - lift;
+          tk.phase = 'fall'; tk.u = 0; tk.x0 = tk.x; tk.y0 = tk.y;
+        } else {
+          const s = tk.path[tk.i], u = tk.u;
+          tk.x = g.pegX(tk.i, tk.Rt) + s * g.dx / 2 * u;
+          tk.y = g.pegY(tk.i) + g.rowH * u - Math.sin(Math.PI * u) * g.rowH * 0.6 - lift;
+        }
+      } else {
+        // Free fall from the last row into the bucket.
+        tk.u += dt / 0.3;
+        const u = Math.min(1, tk.u);
+        tk.x = tk.x0 + (bx - tk.x0) * u;
+        tk.y = tk.y0 + (by - tk.y0) * u * u;
+        if (tk.u >= 1) land(tk);
       }
     }
   }
+  for (const [k, v] of pegFlash) { const nv = v - dt * 3; nv > 0 ? pegFlash.set(k, nv) : pegFlash.delete(k); }
   tokens = tokens.filter(t => !t.dead);
   for (const p of parts) { p.x += p.vx * dt; p.y += p.vy * dt; p.vy += 160 * dt; p.life -= dt; }
   parts = parts.filter(p => p.life > 0);
@@ -1001,6 +1121,16 @@ function draw(t, g) {
   ctx.setLineDash([6, 8]); ctx.lineDashOffset = -(t * g.speed) % 14 * (rate() > 0 ? 1 : 0);
   ctx.beginPath(); ctx.moveTo(g.xSrc, g.beltY); ctx.lineTo(g.xEnd, g.beltY); ctx.stroke();
   ctx.setLineDash([]);
+  if (g.gal) {
+    // Pegs; the ones just hit glow briefly.
+    for (let i = 0; i < g.rows; i++) for (let j = 0; j <= i; j++) {
+      const f = pegFlash.get(i + ',' + j) || 0;
+      ctx.fillStyle = f ? C.accent : C.muted;
+      ctx.globalAlpha = f ? 0.5 + 0.5 * Math.min(1, f) : 0.45;
+      ctx.beginPath(); ctx.arc(g.pegX(i, j), g.pegY(i), 2 + f * 1.5, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+  }
   // Tokens and ghosts.
   for (const tk of tokens) {
     let y = tk.y;
