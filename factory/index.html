@@ -112,8 +112,10 @@ canvas { display: block; width: 100%; height: clamp(320px, 44vw, 470px); backgro
 .item { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--line); }
 .item:last-child { border-bottom: 0; }
 .item > div { min-width: 0; }
-.item button { white-space: nowrap; flex-shrink: 0; }
-.tabs { display: flex; gap: 4px; margin: 14px 0 4px; border-bottom: 1px solid var(--line); }
+.item button, .item > b { white-space: nowrap; flex-shrink: 0; }
+.btns { display: flex; gap: 4px; flex-shrink: 0; }
+.item .btns button { padding: 5px 8px; }
+.tabs { display: flex; flex-wrap: wrap; gap: 4px; margin: 14px 0 4px; border-bottom: 1px solid var(--line); }
 .tabs button { border: 0; border-bottom: 2px solid transparent; border-radius: 0; padding: 8px 8px; color: var(--muted); }
 .tabs button.cur { color: var(--ink); border-bottom-color: var(--accent); }
 .ok { color: var(--good); } .no { color: var(--bad); }
@@ -167,6 +169,7 @@ footer .btns { display: flex; gap: 8px; }
         <button data-act="tab" data-tab="contracts">Контракты</button>
         <button data-act="tab" data-tab="research">Исследования</button>
         <button data-act="tab" data-tab="prestige">Престиж</button>
+        <button data-act="tab" data-tab="bets" hidden>Ставки</button>
       </nav>
       <div id="tabBody"></div>
     </section>
@@ -271,11 +274,27 @@ const PF = (() => {
     { id: 'sum', cost: 4, name: 'Сумматор', desc: 'машина: сумма двух исходов' },
     { id: 'offline', cost: 3, name: 'Оффлайн-прогресс', desc: 'фабрика работает, пока вкладка закрыта (до 8 ч)' },
     { id: 'presets', cost: 4, name: 'Пресеты рецептов', desc: 'два слота, чтобы сохранять и мгновенно менять рецепт' },
+    { id: 'bets', cost: 3, name: 'Стол ставок', desc: 'ставки на среднее следующих исходов против букмекера' },
+    { id: 'kelly', cost: 4, need: 'bets', name: 'Критерий Келли', desc: 'оптимальная доля ставки и автоставки' },
   ];
+
+  // Betting: the bookmaker's estimate trails the true E with a time lag; each posted line adds the noise of
+  // estimating from BOOK_N outputs. A line is posted every BET_COOLDOWN seconds; odds are 1.9 on either side.
+  const BET_ODDS = 1.9, BOOK_TAU = 20, BOOK_N = 1600, BET_COOLDOWN = 8, BET_LIMIT_S = 20, BET_MS = [25, 100, 400];
+  function Phi(z) { // standard normal CDF (Abramowitz–Stegun 7.1.26)
+    const t = 1 / (1 + 0.3275911 * Math.abs(z) / Math.SQRT2);
+    const y = 1 - (((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t - 0.284496736) * t + 0.254829592) * t * Math.exp(-z * z / 2);
+    return z >= 0 ? 0.5 * (1 + y) : 0.5 * (1 - y);
+  }
+  // P(mean of the next M outputs > line), by the central limit theorem.
+  const pOver = (E, sd, M, line) => (sd > 0 ? 1 - Phi((line - E) * Math.sqrt(M) / sd) : E > line ? 1 : 0);
+  // Kelly fraction for a bet won with probability p at decimal odds `odds`.
+  const kelly = (p, odds = BET_ODDS) => Math.max(0, (p * odds - 1) / (odds - 1));
 
   return {
     die, hi, reroll, maxOf, sumOf, mean, sd, entropy, cdf, sample, optimalT, apply, stages,
     DICE, DIE_COST, rollerCost, rollerRate, slotCost, MAX_SLOTS, MAX_SUMS, CONTRACTS, PUP, H_UNIT, bitsFor, RESEARCH,
+    BET_ODDS, BOOK_TAU, BOOK_N, BET_COOLDOWN, BET_LIMIT_S, BET_MS, Phi, pOver, kelly,
   };
 })();
 if (typeof module !== 'undefined') module.exports = PF;
@@ -299,6 +318,7 @@ const fresh = () => ({
   rollers: 0, slots: [], die: 0, cal: 0, res: 0, contract: -1,
   research: {}, presets: [null, null], hints: {},
   runRolls: 0, allRolls: 0, prestiges: 0, sound: false, last: Date.now(),
+  bet: null, bookE: null, line: null, lineAt: 0, betM: 100, betFrac: 0.1, autoKelly: false, betStats: { n: 0, w: 0, net: 0 },
 });
 function load() {
   try { const raw = localStorage.getItem(KEY); if (raw) return Object.assign(fresh(), JSON.parse(raw)); } catch (e) {}
@@ -329,7 +349,12 @@ const clock = () => new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', mi
 
 // ---------- recipe ----------
 let R, HG;
-function recompute() {
+function recompute(keepBet = false) {
+  if (S.bet && !keepBet) {
+    S.e += S.bet.stake;
+    log('Ставка аннулирована: рецепт изменился. Ставка возвращена.');
+    S.bet = null;
+  }
   const st = [PF.die(PF.DICE[S.die])];
   for (const s of S.slots) {
     const d = st[st.length - 1];
@@ -348,6 +373,7 @@ function recompute() {
     log(`Контракт σ/E < ${fmt(PF.CONTRACTS[S.contract].cv)} сорван: рецепт стал слишком разбросанным.`);
     S.contract = -1;
   }
+  if (S.bookE == null) S.bookE = R.E;
   resetHist();
   tokens = [];
 }
@@ -422,14 +448,54 @@ function produce(n) {
   if (n <= 0) return 0;
   let total = 0;
   if (n <= 200) {
-    for (let i = 0; i < n; i++) { const v = PF.sample(R.out, R.cdf, Math.random()); total += v; histAdd(v); observe(v); }
+    for (let i = 0; i < n; i++) { const v = PF.sample(R.out, R.cdf, Math.random()); total += v; histAdd(v); observe(v); betFeed(v); }
   } else {
     // Law of large numbers: the sum of n outputs is n·E plus a σ√n wobble.
     total = n * R.E + gauss() * R.sd * Math.sqrt(n);
     for (let i = 0; i < 200; i++) histAdd(PF.sample(R.out, R.cdf, Math.random()), n / 200);
+    // An open bet still sees each of its outputs individually.
+    for (let i = 0; S.bet && i < n; i++) betFeed(PF.sample(R.out, R.cdf, Math.random()));
   }
   return credit(n, total);
 }
+
+// ---------- betting ----------
+function postLine() {
+  const est = S.bookE + gauss() * R.sd / Math.sqrt(PF.BOOK_N);
+  S.line = Math.round(est * 100) / 100 + 0.005; // never equal to a mean of M integers
+}
+const betLimit = () => Math.max(100, PF.BET_LIMIT_S * rate() * R.E * mult());
+const betStake = () => Math.min(S.e * S.betFrac, betLimit());
+const pWin = (side, M = S.betM) => {
+  if (S.line == null) return 0;
+  const p = PF.pOver(R.E, R.sd, M, S.line);
+  return side === 'over' ? p : 1 - p;
+};
+function kellyPick() {
+  const po = pWin('over'), side = po >= 0.5 ? 'over' : 'under';
+  return { side, p: Math.max(po, 1 - po), f: PF.kelly(Math.max(po, 1 - po)) };
+}
+function placeBet(side, stake) {
+  if (S.bet || S.line == null || !(stake > 0) || stake > S.e + 1e-9) return;
+  S.e -= stake;
+  S.bet = { side, stake, line: S.line, M: S.betM, k: 0, sum: 0, p: pWin(side) };
+  S.line = null;
+}
+function betFeed(v) {
+  const b = S.bet;
+  if (!b) return;
+  b.k++; b.sum += v;
+  if (b.k < b.M) return;
+  const mean = b.sum / b.M, won = b.side === 'over' ? mean > b.line : mean < b.line;
+  const pay = won ? b.stake * PF.BET_ODDS : 0;
+  S.e += pay;
+  S.betStats.n++; if (won) S.betStats.w++; S.betStats.net += pay - b.stake;
+  log(`Ставка «${b.side === 'over' ? 'больше' : 'меньше'} ${fmt(b.line, 3)}»: среднее ${M_(b.M)} = ${fmt(mean, 3)} — ${won ? `выигрыш +${fmt(pay - b.stake)}` : `проигрыш −${fmt(b.stake)}`}`, won ? 'good' : 'rare');
+  S.bet = null;
+  S.lineAt = PF.BET_COOLDOWN;
+  UI.betDirty = true;
+}
+const M_ = M => `${M} ${plural(M, 'исхода', 'исходов', 'исходов')}`;
 
 let carry = 0, factEma = 0, lastT = performance.now();
 function step(dt) {
@@ -437,9 +503,20 @@ function step(dt) {
   const n = Math.floor(carry); carry -= n;
   const got = produce(n);
   factEma = factEma * 0.92 + (got / dt) * 0.08;
+  // The bookmaker's estimate drifts toward the true E with a lag.
+  S.bookE += (R.E - S.bookE) * (1 - Math.exp(-dt / PF.BOOK_TAU));
+  if (!S.bet) {
+    S.lineAt -= dt;
+    if (S.lineAt <= 0) { postLine(); S.lineAt = PF.BET_COOLDOWN; UI.betDirty = true; }
+  }
   if (S.research.autobuy) {
     for (let i = 0; i < 100 && S.e >= PF.rollerCost(S.rollers); i++) buyRoller();
   }
+  if (S.autoKelly && S.research.kelly && !S.bet && rate() > 0) {
+    const k = kellyPick();
+    if (k.f > 0.01) { placeBet(k.side, Math.min(S.e * k.f, betLimit())); UI.betDirty = true; }
+  }
+  if (UI.betDirty && UI.tab === 'bets') { UI.betDirty = false; renderTab(); }
 }
 setInterval(() => {
   const now = performance.now();
@@ -478,6 +555,7 @@ const ACT = {
     const tr = trace();
     histAdd(tr.v); observe(tr.v);
     credit(1, tr.v);
+    betFeed(tr.v);
     $('#lastRoll').textContent = tr.v;
     spawn(tr);
   },
@@ -517,7 +595,7 @@ const ACT = {
   },
   research(b) {
     const r = PF.RESEARCH.find(x => x.id === b.dataset.id);
-    if (!r || S.research[r.id] || S.bits < r.cost) return;
+    if (!r || S.research[r.id] || S.bits < r.cost || (r.need && !S.research[r.need])) return;
     S.bits -= r.cost; S.research[r.id] = 1;
     log(`Изучено: ${r.name}.`, 'good');
     renderAll();
@@ -527,7 +605,7 @@ const ACT = {
     if (g < 1) return;
     if (!b.dataset.armed) { arm(b, 'Точно? Нажмите ещё раз'); return; }
     S.bits += g; S.bitsTotal += g; S.prestiges++;
-    Object.assign(S, { e: 0, p: 0, sumH: 0, rollers: 0, slots: [], die: 0, cal: 0, res: 0, contract: -1, runRolls: 0 });
+    Object.assign(S, { e: 0, p: 0, sumH: 0, rollers: 0, slots: [], die: 0, cal: 0, res: 0, contract: -1, runRolls: 0, bet: null, bookE: null, line: null, lineAt: 0 });
     carry = 0;
     log(`Сброс №${S.prestiges}: +${g} бит. Всего бит: ${S.bitsTotal}, Ожидание ×${fmt(1 + 0.1 * S.bitsTotal)}.`, 'good');
     UI.tab = 'research';
@@ -552,6 +630,10 @@ const ACT = {
     for (const s of S.slots) { if (s.m === 'reroll') s.t = PF.optimalT(d); d = PF.apply(s, d); }
     recompute(); renderRecipe();
   },
+  bet(b) { placeBet(b.dataset.side, betStake()); renderTab(); },
+  betm(b) { S.betM = +b.dataset.m; renderTab(); },
+  kellyset() { const k = kellyPick(); S.betFrac = Math.max(0.01, Math.min(1, k.f)); renderTab(); },
+  autokelly() { S.autoKelly = !S.autoKelly; renderTab(); },
   psave(b) { S.presets[+b.dataset.i] = S.slots.map(s => ({ ...s })); renderRecipe(); },
   pload(b) {
     const pr = S.presets[+b.dataset.i];
@@ -581,8 +663,11 @@ document.addEventListener('change', ev => {
   recompute(); renderRecipe(); refresh();
 });
 document.addEventListener('input', ev => {
+  const f = ev.target.closest('input[data-frac]');
+  if (f) { S.betFrac = +f.value / 100; refresh(); return; }
   const r = ev.target.closest('input[data-thr]');
   if (!r) return;
+  UI.betDirty = true;
   const i = +r.dataset.thr;
   S.slots[i].t = +r.value;
   recompute();
@@ -634,7 +719,11 @@ function updateMinis() {
 }
 
 function renderTab() {
-  document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('cur', b.dataset.tab === UI.tab));
+  if (UI.tab === 'bets' && !S.research.bets) UI.tab = 'contracts';
+  document.querySelectorAll('#tabs button').forEach(b => {
+    b.classList.toggle('cur', b.dataset.tab === UI.tab);
+    if (b.dataset.tab === 'bets') b.hidden = !S.research.bets;
+  });
   const body = $('#tabBody');
   if (UI.tab === 'contracts') {
     const cvTxt = S.research.numbers ? fmt(R.cv, 3) : (HG.n > 30 ? '≈' + fmt(empSd() / empMean(), 2) : '?');
@@ -651,7 +740,28 @@ function renderTab() {
   } else if (UI.tab === 'research') {
     body.innerHTML = `<p class="sub">Биты дают престижные сбросы. Свободно: <b class="num">${S.bits}</b> · всего получено: <b class="num">${S.bitsTotal}</b> (каждый навсегда +10% к Ожиданию).</p>
       ${PF.RESEARCH.map(r => `<div class="item"><div><b>${r.name}</b><div class="sub">${r.desc}</div></div>
-        ${S.research[r.id] ? '<span class="ok sub">изучено</span>' : `<button data-act="research" data-id="${r.id}" data-cost="${r.cost}" data-cur="bits">${r.cost} бит</button>`}</div>`).join('')}`;
+        ${S.research[r.id] ? '<span class="ok sub">изучено</span>'
+          : r.need && !S.research[r.need] ? `<span class="sub">после «${PF.RESEARCH.find(x => x.id === r.need).name}»</span>`
+          : `<button data-act="research" data-id="${r.id}" data-cost="${r.cost}" data-cur="bits">${r.cost} бит</button>`}</div>`).join('')}`;
+  } else if (UI.tab === 'bets') {
+    body.innerHTML = `<p class="sub">Букмекер ставит линию на среднее следующих M исходов вашего выхода. Он оценивает ваш поток по выборке из ${PF.BOOK_N} исходов, с опозданием около ${PF.BOOK_TAU} с, выставляет новую линию раз в ${PF.BET_COOLDOWN} с и платит ×${fmt(PF.BET_ODDS)} на любую сторону. Выгодно, когда вы знаете рецепт лучше него: сразу после улучшения или когда его оценка случайно промахнулась. Ставка ограничена ${PF.BET_LIMIT_S} секундами дохода; изменение рецепта её аннулирует.</p>
+      <div class="item"><div>Линия букмекера<div class="sub">среднее следующих M исходов</div></div><b class="num" id="bLine"></b></div>
+      <div class="item"><div>Исходов в ставке<div class="sub">больше M — меньше шума, но дольше ждать</div></div>
+        <span class="btns">${PF.BET_MS.map(m => `<button data-act="betm" data-m="${m}" class="${S.betM === m ? 'on' : ''}">${m}</button>`).join(' ')}</span></div>
+      <label class="thr" style="margin-top:10px"><span>Ставка: <b class="num" id="bStakeTxt"></b></span>
+        <input type="range" data-frac min="1" max="100" value="${Math.round(S.betFrac * 100)}" aria-label="Доля банка"></label>
+      <div class="sub" id="bChance" style="margin-top:6px"></div>
+      <div class="row" style="margin-top:8px">
+        <button data-act="bet" data-side="over" id="bOver" style="flex:1">Больше · ×${fmt(PF.BET_ODDS)}</button>
+        <button data-act="bet" data-side="under" id="bUnder" style="flex:1">Меньше · ×${fmt(PF.BET_ODDS)}</button>
+      </div>
+      ${S.research.kelly ? `<div class="card" style="margin-top:12px">
+        <div class="row"><b>Келли</b><span class="num" id="bKelly"></span></div>
+        <div class="sub">f* = (p·${fmt(PF.BET_ODDS)} − 1) / ${fmt(PF.BET_ODDS - 1)} — доля банка, при которой капитал растёт быстрее всего. Больше f* — рост медленнее и риск разорения выше; около 2f* рост капитала останавливается, хотя каждая ставка выгодна.</div>
+        <div class="row"><button data-act="kellyset">Доля по Келли</button>
+          <button data-act="autokelly" class="${S.autoKelly ? 'on' : ''}">Авто-Келли: ${S.autoKelly ? 'вкл' : 'выкл'}</button></div></div>` : ''}
+      <div id="bLive" style="margin-top:12px"></div>
+      <div class="sub" id="bStats" style="margin-top:8px"></div>`;
   } else {
     body.innerHTML = `<p class="sub">Сброс обнуляет Ожидание, броскомёты, слоты, грани и Точность. Взамен — биты: мера случайности, которую произвела фабрика. Машины, которые сжимают разброс, поднимают Ожидание, но производят меньше битов.</p>
       <div class="item"><div>Произведено энтропии<div class="sub">бит × исходов в этом забеге</div></div><b class="num" id="pSumH"></b></div>
@@ -702,6 +812,31 @@ function refresh() {
     ? `Теория: <b>E ${fmt(R.E, 3)}</b> · <b>σ ${fmt(R.sd, 3)}</b> · КПД <b>${pct(R.eff)}</b>${S.research.entropy ? ` · H <b>${fmt(R.H, 3)}</b> бит` : ''}`
     : '<span class="muted">Теория: неизвестна (исследование «Числа рецепта»)</span>';
   $('#stats').innerHTML = `<span>${emp}</span><span>${th}</span>`;
+  if (UI.tab === 'bets') refreshBets();
+}
+function refreshBets() {
+  const set = (id, t) => { const el = $(id); if (el) el.innerHTML = t; };
+  const stake = betStake(), lim = betLimit();
+  set('#bLine', S.line != null ? fmt(S.line, 3) : S.bet ? 'занята ставкой' : `<span class="muted">новая через ${Math.ceil(S.lineAt / SPEED)} с</span>`);
+  set('#bStakeTxt', `${Math.round(S.betFrac * 100)}% банка = ${fmt(stake)}${S.e * S.betFrac > lim ? ` <span class="muted">(лимит стола ${fmt(lim)})</span>` : ''}`);
+  const po = pWin('over');
+  set('#bChance', S.line == null ? '' : S.research.numbers || S.research.kelly
+    ? `Ваш шанс: больше ≈ <b class="num">${pct(po)}</b> · меньше ≈ <b class="num">${pct(1 - po)}</b> <span class="muted">(безубыточно от ${pct(1 / PF.BET_ODDS)})</span>`
+    : `Шанс неизвестен без «Чисел рецепта» — сравните линию с x̄ на гистограмме.`);
+  for (const id of ['#bOver', '#bUnder']) { const b = $(id); if (b) b.disabled = !!S.bet || S.line == null || !(stake > 0); }
+  if (S.research.kelly) {
+    const k = kellyPick();
+    set('#bKelly', S.line == null ? '—' : k.f > 0 ?`${pct(k.f)} на «${k.side === 'over' ? 'больше' : 'меньше'}»` : 'не ставить');
+  }
+  const b = S.bet;
+  if (b) {
+    const mean = b.k ? b.sum / b.k : NaN, winning = b.k && (b.side === 'over' ? mean > b.line : mean < b.line);
+    set('#bLive', `<div class="card"><div class="row"><span>«${b.side === 'over' ? 'Больше' : 'Меньше'} ${fmt(b.line, 3)}» на ${fmt(b.stake)}</span><span class="num">${b.k}/${b.M}</span></div>
+      <div class="bar"><i style="width:${(100 * b.k / b.M).toFixed(1)}%"></i></div>
+      <div class="sub">Текущее среднее: <b class="num ${b.k ? (winning ? 'ok' : 'no') : ''}">${b.k ? fmt(mean, 3) : '—'}</b> · шанс при ставке ${pct(b.p)}</div></div>`);
+  } else set('#bLive', '');
+  const st = S.betStats;
+  set('#bStats', st.n ? `Ставок: ${st.n}, выиграно ${st.w} (${pct(st.w / st.n)}) · итог ${st.net >= 0 ? '+' : '−'}${fmt(Math.abs(st.net))}` : '');
 }
 function fmtTime(s) {
   if (!isFinite(s)) return '∞';
@@ -937,6 +1072,21 @@ function draw(t, g) {
     ctx.beginPath(); ctx.moveTo(x, g.hTop); ctx.lineTo(x, base); ctx.stroke(); ctx.setLineDash([]); ctx.globalAlpha = 1;
     ctx.fillStyle = C.ink; ctx.font = '500 11px "IBM Plex Mono", monospace'; ctx.fillText('x̄', x + 8, g.hTop + 6);
   }
+  if (S.research.bets) {
+    // The bookmaker's line, and the running mean of an open bet chasing it.
+    const line = S.bet ? S.bet.line : S.line ?? S.bookE, x = xOfV(line);
+    ctx.strokeStyle = C.v2; ctx.lineWidth = 1.5; ctx.setLineDash([6, 4]);
+    ctx.beginPath(); ctx.moveTo(x, g.hTop + 2); ctx.lineTo(x, base); ctx.stroke(); ctx.setLineDash([]);
+    ctx.fillStyle = C.v2; ctx.font = '500 11px "IBM Plex Mono", monospace';
+    ctx.fillText('линия', x, g.hTop - 6);
+    if (S.bet && S.bet.k) {
+      const mx = xOfV(S.bet.sum / S.bet.k), y = base - plotH * 0.5;
+      ctx.fillStyle = C.ink;
+      ctx.beginPath(); ctx.moveTo(mx, y - 7); ctx.lineTo(mx + 6, y); ctx.lineTo(mx, y + 7); ctx.lineTo(mx - 6, y); ctx.fill();
+      ctx.strokeStyle = C.ink; ctx.globalAlpha = 0.4; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(mx, y); ctx.stroke(); ctx.globalAlpha = 1;
+    }
+  }
   ctx.fillStyle = C.muted; ctx.font = '400 10.5px "IBM Plex Mono", monospace';
   const every = Math.max(1, Math.ceil(HG.B / Math.max(1, W / 34)));
   for (let b = 0; b < HG.B; b += every) ctx.fillText(R.lo + Math.round(b * HG.w), pad + (b + 0.5) * bw, base + 15);
@@ -958,7 +1108,7 @@ function frame(now) {
 
 // ---------- boot ----------
 readTheme();
-recompute();
+recompute(true);
 renderAll();
 if (S.research.offline && S.last) {
   const dt = Math.min(8 * 3600, (Date.now() - S.last) / 1000);
